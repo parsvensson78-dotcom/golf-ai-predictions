@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Golf AI Assistant</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        function GolfNewsAgent() {
+            const [activeTab, setActiveTab] = useState('setup');
+            const [apiKey, setApiKey] = useState('');
+            const [apiKeyStored, setApiKeyStored] = useState(false);
+            const [news, setNews] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [summary, setSummary] = useState('');
+            const [error, setError] = useState('');
+            const [newsType, setNewsType] = useState('general');
+            
+            const [predictions, setPredictions] = useState(null);
+            const [predictionsLoading, setPredictionsLoading] = useState(false);
+            const [selectedTour, setSelectedTour] = useState('pga');
+
+            useEffect(() => {
+                const stored = localStorage.getItem('anthropic_api_key');
+                if (stored) {
+                    setApiKey(stored);
+                    setApiKeyStored(true);
+                    setActiveTab('news');
+                }
+            }, []);
+
+            const saveApiKey = () => {
+                if (apiKey.trim()) {
+                    localStorage.setItem('anthropic_api_key', apiKey.trim());
+                    setApiKeyStored(true);
+                    setActiveTab('news');
+                    setError('');
+                } else {
+                    setError('Please enter a valid API key');
+                }
+            };
+
+            const clearApiKey = () => {
+                if (confirm('Clear your API key?')) {
+                    localStorage.removeItem('anthropic_api_key');
+                    setApiKey('');
+                    setApiKeyStored(false);
+                    setActiveTab('setup');
+                }
+            };
+
+            const extractJSON = (text) => {
+                const jsonMatch = text.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    return jsonMatch[0];
+                }
+                return text;
+            };
+
+            const callClaudeAPI = async (messages, maxTokens = 1000) => {
+                const response = await fetch("/.netlify/functions/claude", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        api_key: apiKey,
+                        max_tokens: maxTokens,
+                        messages: messages,
+                        tools: ['web_search', 'web_fetch']
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error?.message || errorData.error || `API Error ${response.status}`);
+                }
+
+                return await response.json();
+            };
+
+            const fetchGolfNews = async (type) => {
+                setLoading(true);
+                setError('');
+                setSummary('');
+                setNews([]);
+
+                try {
+                    let searchQuery = 'latest golf news';
+                    let fetchUrls = [];
+                    
+                    if (type === 'pga') {
+                        searchQuery = 'PGA Tour latest news results';
+                        fetchUrls = ['https://www.pgatour.com/news'];
+                    } else if (type === 'majors') {
+                        searchQuery = 'golf majors latest news';
+                    } else if (type === 'european') {
+                        searchQuery = 'DP World Tour latest news results';
+                        fetchUrls = ['https://www.europeantour.com/news/'];
+                    } else if (type === 'players') {
+                        searchQuery = 'professional golfers latest news';
+                    }
+
+                    const today = new Date().toLocaleDateString('en-US', { 
+                        weekday: 'long', 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric' 
+                    });
+
+                    const data = await callClaudeAPI([
+                        {
+                            role: "user",
+                            content: `Today is ${today}. 
+
+Search for the LATEST ${searchQuery} from TODAY or this week. Use web search first, then fetch pages from official sources like pgatour.com or dpworldtour.com to get the most current information.
+
+Important: Look for:
+- Tournament results from THIS WEEK
+- Current tournament status (ongoing or just finished)
+- Latest player news
+- Recent developments
+
+Provide 3-5 most recent stories.
+
+CRITICAL: Respond with ONLY valid JSON. No text before or after.
+
+Format:
+{
+  "summary": "Brief overview of current golf news this week",
+  "stories": [
+    {
+      "title": "Story title",
+      "summary": "What happened and when",
+      "source": "Source"
+    }
+  ]
+}
+
+Use proper JSON escaping for all strings.`
+                        }
+                    ], 1500);
+
+                    const fullResponse = data.content
+                        .map(item => (item.type === "text" ? item.text : ""))
+                        .filter(Boolean)
+                        .join("\n");
+
+                    let cleanResponse = fullResponse.replace(/```json\n?|\n?```/g, "").trim();
+                    cleanResponse = extractJSON(cleanResponse);
+                    
+                    let newsData;
+                    try {
+                        newsData = JSON.parse(cleanResponse);
+                    } catch (parseError) {
+                        console.error('JSON parse error:', parseError);
+                        console.error('Response was:', cleanResponse);
+                        throw new Error('Invalid response format. Please try again.');
+                    }
+                    
+                    setSummary(newsData.summary || 'No summary available');
+                    setNews(newsData.stories || []);
+                    
+                    if (!newsData.stories || newsData.stories.length === 0) {
+                        setError('No news stories found. Please try again.');
+                    }
+                } catch (err) {
+                    console.error("Error:", err);
+                    setError(`Failed to fetch news: ${err.message}`);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const fetchPredictions = async (tour) => {
+                setPredictionsLoading(true);
+                setError('');
+
+                try {
+                    const tourName = tour === 'pga' ? 'PGA Tour' : 'DP World Tour';
+                    const tourUrl = tour === 'pga' ? 'https://www.pgatour.com' : 'https://www.europeantour.com';
+                    
+                    const today = new Date().toLocaleDateString('en-US', { 
+                        weekday: 'long', 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric' 
+                    });
+                    
+                    const data = await callClaudeAPI([
+                        {
+                            role: "user",
+                            content: `Today is ${today}. 
+
+Find THIS WEEK'S ${tourName} tournament. Search for the current tournament schedule, then:
+
+1. Use web_fetch to get data from ${tourUrl} and the official tournament page
+2. Get current field/player list and odds from betting sites
+3. For each top player, gather their stats from:
+   - Official tour stats pages
+   - DataGolf.com (strokes gained data)
+   - Recent form and course history
+
+Analyze which players' skills match the course conditions:
+- Driving distance & accuracy
+- Approach play (strokes gained approach)
+- Short game
+- Putting (especially on these greens)
+- Wind play ability
+- Course history
+
+Predict TOP 10 players with detailed reasoning based on statistical analysis.
+
+CRITICAL: Respond with ONLY valid JSON.
+
+Format:
+{
+  "tournament": "Official tournament name",
+  "course": "Course name",
+  "location": "City, Country",
+  "dates": "Date range",
+  "courseAnalysis": {
+    "type": "Course type (links/parkland/desert)",
+    "length": "Yardage",
+    "par": "Par",
+    "conditions": "Current conditions, wind, firmness, rough, greens",
+    "keyFactors": ["Most important skills for this course"]
+  },
+  "topPicks": [
+    {
+      "rank": 1,
+      "player": "Player name",
+      "odds": "Current betting odds",
+      "reasoning": "Why this player fits the course based on stats and form",
+      "keyStrengths": ["Specific stats/skills that match course needs"],
+      "confidence": "high or medium"
+    }
+  ]
+}
+
+Base predictions on actual strokes gained data and course fit, not just rankings.`
+                        }
+                    ], 3000);
+
+                    const fullResponse = data.content
+                        .map(item => (item.type === "text" ? item.text : ""))
+                        .filter(Boolean)
+                        .join("\n");
+
+                    let cleanResponse = fullResponse.replace(/```json\n?|\n?```/g, "").trim();
+                    cleanResponse = extractJSON(cleanResponse);
+                    
+                    let predictionsData;
+                    try {
+                        predictionsData = JSON.parse(cleanResponse);
+                    } catch (parseError) {
+                        console.error('JSON parse error:', parseError);
+                        console.error('Response was:', cleanResponse);
+                        throw new Error('Invalid response format. Please try again.');
+                    }
+                    
+                    setPredictions(predictionsData);
+                } catch (err) {
+                    console.error("Error:", err);
+                    setError(`Failed to fetch predictions: ${err.message}`);
+                } finally {
+                    setPredictionsLoading(false);
+                }
+            };
+
+            const handleRefresh = () => {
+                if (activeTab === 'news') {
+                    fetchGolfNews(newsType);
+                } else if (activeTab === 'predictions') {
+                    fetchPredictions(selectedTour);
+                }
+            };
+
+            const getConfidenceColor = (confidence) => {
+                return confidence === 'high' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
+            };
+
+            const getRankColor = (rank) => {
+                if (rank === 1) return 'bg-yellow-400 text-yellow-900';
+                if (rank === 2) return 'bg-gray-300 text-gray-800';
+                if (rank === 3) return 'bg-orange-300 text-orange-900';
+                return 'bg-blue-100 text-blue-800';
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 p-3 sm:p-6">
+                    <div className="max-w-6xl mx-auto">
+                        <div className="bg-white rounded-lg shadow-lg p-4 sm:p-6 mb-4 sm:mb-6">
+                            <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-green-600 rounded-full flex items-center justify-center text-white text-xl sm:text-2xl">⛳</div>
+                                    <div>
+                                        <h1 className="text-xl sm:text-3xl font-bold text-gray-800">Golf AI</h1>
+                                        <p className="text-xs sm:text-base text-gray-600">Real-Time News & Stats-Based Predictions</p>
+                                    </div>
+                                </div>
+                                {apiKeyStored && (
+                                    <div className="flex gap-2">
+                                        <button onClick={handleRefresh} disabled={loading || predictionsLoading} className="px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:bg-gray-400">
+                                            {(loading || predictionsLoading) ? "..." : "🔄"}
+                                        </button>
+                                        <button onClick={clearApiKey} className="px-3 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700">Clear</button>
+                                    </div>
+                                )}
+                            </div>
+
+                            {apiKeyStored && (
+                                <div className="flex gap-2 border-b border-gray-200">
+                                    <button onClick={() => setActiveTab('news')} className={`px-4 py-2 font-semibold text-sm ${activeTab === 'news' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>📰 News</button>
+                                    <button onClick={() => { setActiveTab('predictions'); if (!predictions) fetchPredictions('pga'); }} className={`px-4 py-2 font-semibold text-sm ${activeTab === 'predictions' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>🎯 Predictions</button>
+                                </div>
+                            )}
+                        </div>
+
+                        {error && <div className="bg-red-100 border border-red-400 text-red-700 px-3 py-2 rounded-lg mb-4 text-sm">{error}</div>}
+
+                        {activeTab === 'setup' && (
+                            <div className="bg-white rounded-lg shadow-lg p-4 sm:p-8">
+                                <h2 className="text-xl sm:text-2xl font-bold mb-4">🔑 API Key Setup</h2>
+                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                                    <p className="text-sm text-blue-800 mb-2"><strong>Get your API key:</strong></p>
+                                    <ol className="list-decimal list-inside space-y-1 text-sm text-blue-800">
+                                        <li>Visit <a href="https://console.anthropic.com/" target="_blank" className="underline">console.anthropic.com</a></li>
+                                        <li>Sign up or log in</li>
+                                        <li>Go to API Keys → Create Key</li>
+                                        <li>Copy and paste below</li>
+                                    </ol>
+                                </div>
+                                <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-ant-..." className="w-full px-3 py-2 border rounded-lg mb-3 text-sm" />
+                                <button onClick={saveApiKey} className="w-full px-4 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700">Save & Continue</button>
+                            </div>
+                        )}
+
+                        {activeTab === 'news' && apiKeyStored && (
+                            <>
+                                <div className="bg-white rounded-lg shadow-lg p-3 mb-4">
+                                    <div className="flex gap-2 flex-wrap">
+                                        {[
+                                            { id: 'general', label: 'General' },
+                                            { id: 'pga', label: 'PGA' },
+                                            { id: 'majors', label: 'Majors' },
+                                            { id: 'european', label: 'DP World' },
+                                            { id: 'players', label: 'Players' }
+                                        ].map(type => (
+                                            <button
+                                                key={type.id}
+                                                onClick={() => { setNewsType(type.id); fetchGolfNews(type.id); }}
+                                                disabled={loading}
+                                                className={`px-3 py-2 rounded-lg text-sm ${newsType === type.id ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700'}`}
+                                            >
+                                                {type.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {!news.length && !loading && (
+                                    <div className="bg-white rounded-lg shadow-lg p-6 text-center">
+                                        <p className="text-sm text-gray-600">Select a category to get the latest news</p>
+                                    </div>
+                                )}
+
+                                {loading && (
+                                    <div className="bg-white rounded-lg shadow-lg p-8 text-center">
+                                        <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
+                                        <p className="mt-4 text-sm">Fetching latest news from official sources...</p>
+                                    </div>
+                                )}
+
+                                {summary && !loading && (
+                                    <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
+                                        <h2 className="text-lg font-bold mb-2">📰 This Week's Highlights</h2>
+                                        <p className="text-sm text-gray-700">{summary}</p>
+                                    </div>
+                                )}
+
+                                {news.length > 0 && !loading && (
+                                    <div className="space-y-3">
+                                        <h2 className="text-xl font-bold text-gray-800 mb-3">Latest Stories</h2>
+                                        {news.map((story, i) => (
+                                            <div key={i} className="bg-white rounded-lg shadow-lg p-4">
+                                                <div className="flex gap-3">
+                                                    <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center text-white font-bold text-sm">{i + 1}</div>
+                                                    <div className="flex-1">
+                                                        <h3 className="text-base font-bold mb-2">{story.title}</h3>
+                                                        <p className="text-sm text-gray-700 mb-2">{story.summary}</p>
+                                                        <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">{story.source}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </>
+                        )}
+
+                        {activeTab === 'predictions' && apiKeyStored && (
+                            <>
+                                <div className="bg-white rounded-lg shadow-lg p-3 mb-4">
+                                    <div className="flex gap-2">
+                                        <button onClick={() => { setSelectedTour('pga'); fetchPredictions('pga'); }} disabled={predictionsLoading} className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm ${selectedTour === 'pga' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>PGA Tour</button>
+                                        <button onClick={() => { setSelectedTour('dp'); fetchPredictions('dp'); }} disabled={predictionsLoading} className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm ${selectedTour === 'dp' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>DP World</button>
+                                    </div>
+                                </div>
+
+                                {predictionsLoading && (
+                                    <div className="bg-white rounded-lg shadow-lg p-8 text-center">
+                                        <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
+                                        <p className="mt-4 text-sm">Analyzing player stats and course data...</p>
+                                    </div>
+                                )}
+
+                                {predictions && !predictionsLoading && (
+                                    <>
+                                        <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
+                                            <h2 className="text-lg font-bold mb-3">{predictions.tournament}</h2>
+                                            <div className="grid grid-cols-2 gap-3 mb-3 text-sm">
+                                                <div><p className="text-xs text-gray-600">Course</p><p className="font-semibold">{predictions.course}</p></div>
+                                                <div><p className="text-xs text-gray-600">Location</p><p className="font-semibold">{predictions.location}</p></div>
+                                            </div>
+                                            {predictions.courseAnalysis && (
+                                                <>
+                                                    <div className="mb-3"><p className="text-xs text-gray-600 mb-1">Conditions</p><p className="text-sm">{predictions.courseAnalysis.conditions}</p></div>
+                                                    <div><p className="text-xs text-gray-600 mb-1">Key Factors</p><div className="flex gap-2 flex-wrap">{predictions.courseAnalysis.keyFactors.map((f, i) => <span key={i} className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs">{f}</span>)}</div></div>
+                                                </>
+                                            )}
+                                        </div>
+
+                                        <div className="bg-white rounded-lg shadow-lg p-4">
+                                            <h2 className="text-lg font-bold mb-4">🎯 Top 10 Stats-Based Picks</h2>
+                                            <div className="space-y-3">
+                                                {predictions.topPicks.map((pick, i) => (
+                                                    <div key={i} className="border-l-4 border-green-600 bg-gray-50 p-3 rounded-r-lg">
+                                                        <div className="flex gap-3">
+                                                            <div className={`w-10 h-10 ${getRankColor(pick.rank)} rounded-full flex items-center justify-center font-bold`}>{pick.rank}</div>
+                                                            <div className="flex-1">
+                                                                <div className="flex justify-between mb-2 flex-wrap gap-2">
+                                                                    <h3 className="text-base font-bold">{pick.player}</h3>
+                                                                    <div className="flex gap-2">
+                                                                        {pick.odds && <span className="px-2 py-1 bg-purple-100 text-purple-800 rounded-full text-xs">{pick.odds}</span>}
+                                                                        {pick.confidence && <span className={`px-2 py-1 rounded-full text-xs ${getConfidenceColor(pick.confidence)}`}>{pick.confidence}</span>}
+                                                                    </div>
+                                                                </div>
+                                                                <p className="text-sm text-gray-700 mb-2">{pick.reasoning}</p>
+                                                                {pick.keyStrengths && <div className="flex gap-2 flex-wrap">{pick.keyStrengths.map((s, j) => <span key={j} className="px-2 py-1 bg-green-50 text-green-700 rounded text-xs border border-green-200">✓ {s}</span>)}</div>}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-4">
+                                            <p className="text-xs text-blue-800">
+                                                <strong>Data Sources:</strong> Predictions based on official tour stats, DataGolf strokes gained metrics, current form, course history, and betting markets.
+                                            </p>
+                                        </div>
+
+                                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mt-2">
+                                            <p className="text-xs text-yellow-800">
+                                                <strong>Disclaimer:</strong> AI predictions for entertainment. Always do your own research.
+                                            </p>
+                                        </div>
+                                    </>
+                                )}
+                            </>
+                        )}
+
+                        <div className="mt-6 text-center text-xs text-gray-600"><p>Powered by Claude AI with real-time data</p></div>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<GolfNewsAgent />, document.getElementById('root'));
+    </script>
+</body>
+</html>
