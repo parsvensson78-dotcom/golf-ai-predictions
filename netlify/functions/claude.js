@@ -37,16 +37,12 @@ exports.handler = async (event, context) => {
       messages: messages
     };
 
-    // Add both web_search and web_fetch tools
+    // Only use web_search tool
     if (tools && tools.length > 0) {
       requestBody.tools = [
         {
           "type": "web_search_20250305",
           "name": "web_search"
-        },
-        {
-          "type": "web_fetch_20250305",
-          "name": "web_fetch"
         }
       ];
     }
@@ -97,4 +93,4 @@ exports.handler = async (event, context) => {
       })
     };
   }
-}; 
+};
