@@ -76,7 +76,7 @@
                         api_key: apiKey,
                         max_tokens: maxTokens,
                         messages: messages,
-                        tools: ['web_search', 'web_fetch']
+                        tools: ['web_search']
                     })
                 });
 
@@ -88,6 +88,15 @@
                 return await response.json();
             };
 
+            const getCurrentDate = () => {
+                return new Date().toLocaleDateString('en-US', { 
+                    weekday: 'long', 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric' 
+                });
+            };
+
             const fetchGolfNews = async (type) => {
                 setLoading(true);
                 setError('');
@@ -95,58 +104,52 @@
                 setNews([]);
 
                 try {
-                    let searchQuery = 'latest golf news';
-                    let fetchUrls = [];
+                    let searchQuery = '';
                     
                     if (type === 'pga') {
-                        searchQuery = 'PGA Tour latest news results';
-                        fetchUrls = ['https://www.pgatour.com/news'];
+                        searchQuery = 'PGA Tour latest news January 2026 this week current tournament';
                     } else if (type === 'majors') {
-                        searchQuery = 'golf majors latest news';
+                        searchQuery = 'golf majors news 2026';
                     } else if (type === 'european') {
-                        searchQuery = 'DP World Tour latest news results';
-                        fetchUrls = ['https://www.europeantour.com/news/'];
+                        searchQuery = 'DP World Tour latest news January 2026 current week';
                     } else if (type === 'players') {
-                        searchQuery = 'professional golfers latest news';
+                        searchQuery = 'professional golfers news this week 2026';
+                    } else {
+                        searchQuery = 'golf news this week January 2026';
                     }
 
-                    const today = new Date().toLocaleDateString('en-US', { 
-                        weekday: 'long', 
-                        year: 'numeric', 
-                        month: 'long', 
-                        day: 'numeric' 
-                    });
+                    const today = getCurrentDate();
 
                     const data = await callClaudeAPI([
                         {
                             role: "user",
-                            content: `Today is ${today}. 
+                            content: `Today is ${today}. Search for ${searchQuery}.
 
-Search for the LATEST ${searchQuery} from TODAY or this week. Use web search first, then fetch pages from official sources like pgatour.com or dpworldtour.com to get the most current information.
+IMPORTANT: I need THE MOST RECENT news from THIS WEEK. Look for:
+- Results from tournaments that finished in the last 1-3 days
+- Current ongoing tournaments
+- Latest player news from this week
+- Recent announcements
 
-Important: Look for:
-- Tournament results from THIS WEEK
-- Current tournament status (ongoing or just finished)
-- Latest player news
-- Recent developments
+Search multiple times if needed to find the freshest content. Prioritize results from pgatour.com, dpworldtour.com, golf.com, and ESPN.
 
-Provide 3-5 most recent stories.
+Provide 3-5 most recent stories with what happened and when.
 
 CRITICAL: Respond with ONLY valid JSON. No text before or after.
 
 Format:
 {
-  "summary": "Brief overview of current golf news this week",
+  "summary": "Brief overview of current golf news this week including latest tournament results",
   "stories": [
     {
       "title": "Story title",
-      "summary": "What happened and when",
-      "source": "Source"
+      "summary": "What happened and when (include dates if tournament finished)",
+      "source": "Source name"
     }
   ]
 }
 
-Use proper JSON escaping for all strings.`
+Use proper JSON escaping.`
                         }
                     ], 1500);
 
@@ -187,38 +190,32 @@ Use proper JSON escaping for all strings.`
 
                 try {
                     const tourName = tour === 'pga' ? 'PGA Tour' : 'DP World Tour';
-                    const tourUrl = tour === 'pga' ? 'https://www.pgatour.com' : 'https://www.europeantour.com';
-                    
-                    const today = new Date().toLocaleDateString('en-US', { 
-                        weekday: 'long', 
-                        year: 'numeric', 
-                        month: 'long', 
-                        day: 'numeric' 
-                    });
+                    const today = getCurrentDate();
                     
                     const data = await callClaudeAPI([
                         {
                             role: "user",
                             content: `Today is ${today}. 
 
-Find THIS WEEK'S ${tourName} tournament. Search for the current tournament schedule, then:
+Find THIS WEEK'S ${tourName} tournament (the one happening right now or starting this week in January 2026).
 
-1. Use web_fetch to get data from ${tourUrl} and the official tournament page
-2. Get current field/player list and odds from betting sites
-3. For each top player, gather their stats from:
-   - Official tour stats pages
-   - DataGolf.com (strokes gained data)
-   - Recent form and course history
+Search for:
+1. Current ${tourName} schedule and field
+2. Course details and conditions
+3. Weather forecast
+4. Player statistics from pgatour.com stats section
+5. Strokes gained data from datagolf.com
+6. Current betting odds from sportsbooks
+7. Recent player form and results
 
-Analyze which players' skills match the course conditions:
-- Driving distance & accuracy
-- Approach play (strokes gained approach)
-- Short game
-- Putting (especially on these greens)
-- Wind play ability
-- Course history
+Analyze which players match the course based on:
+- Driving stats (distance, accuracy)
+- Strokes gained: approach, around the green, putting
+- Recent form (last 4-6 tournaments)
+- Course history if they've played here before
+- Wind play ability if relevant
 
-Predict TOP 10 players with detailed reasoning based on statistical analysis.
+Predict TOP 10 players with statistical reasoning.
 
 CRITICAL: Respond with ONLY valid JSON.
 
@@ -227,27 +224,27 @@ Format:
   "tournament": "Official tournament name",
   "course": "Course name",
   "location": "City, Country",
-  "dates": "Date range",
+  "dates": "Tournament dates",
   "courseAnalysis": {
-    "type": "Course type (links/parkland/desert)",
+    "type": "Course type",
     "length": "Yardage",
     "par": "Par",
-    "conditions": "Current conditions, wind, firmness, rough, greens",
-    "keyFactors": ["Most important skills for this course"]
+    "conditions": "Current conditions description",
+    "keyFactors": ["Key skill 1", "Key skill 2", "Key skill 3"]
   },
   "topPicks": [
     {
       "rank": 1,
       "player": "Player name",
-      "odds": "Current betting odds",
-      "reasoning": "Why this player fits the course based on stats and form",
-      "keyStrengths": ["Specific stats/skills that match course needs"],
-      "confidence": "high or medium"
+      "odds": "Betting odds",
+      "reasoning": "Statistical analysis of why this player fits (reference specific stats)",
+      "keyStrengths": ["Specific strength with stat", "Another strength"],
+      "confidence": "high"
     }
   ]
 }
 
-Base predictions on actual strokes gained data and course fit, not just rankings.`
+Base predictions on stats, not just world rankings. Include 10 players.`
                         }
                     ], 3000);
 
@@ -305,7 +302,7 @@ Base predictions on actual strokes gained data and course fit, not just rankings
                                     <div className="w-10 h-10 sm:w-12 sm:h-12 bg-green-600 rounded-full flex items-center justify-center text-white text-xl sm:text-2xl">⛳</div>
                                     <div>
                                         <h1 className="text-xl sm:text-3xl font-bold text-gray-800">Golf AI</h1>
-                                        <p className="text-xs sm:text-base text-gray-600">Real-Time News & Stats-Based Predictions</p>
+                                        <p className="text-xs sm:text-base text-gray-600">Real-Time News & Stats</p>
                                     </div>
                                 </div>
                                 {apiKeyStored && (
@@ -370,20 +367,20 @@ Base predictions on actual strokes gained data and course fit, not just rankings
 
                                 {!news.length && !loading && (
                                     <div className="bg-white rounded-lg shadow-lg p-6 text-center">
-                                        <p className="text-sm text-gray-600">Select a category to get the latest news</p>
+                                        <p className="text-sm text-gray-600">Select a category for latest news</p>
                                     </div>
                                 )}
 
                                 {loading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="mt-4 text-sm">Fetching latest news from official sources...</p>
+                                        <p className="mt-4 text-sm">Searching for latest news...</p>
                                     </div>
                                 )}
 
                                 {summary && !loading && (
                                     <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
-                                        <h2 className="text-lg font-bold mb-2">📰 This Week's Highlights</h2>
+                                        <h2 className="text-lg font-bold mb-2">📰 This Week</h2>
                                         <p className="text-sm text-gray-700">{summary}</p>
                                     </div>
                                 )}
@@ -420,7 +417,7 @@ Base predictions on actual strokes gained data and course fit, not just rankings
                                 {predictionsLoading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="mt-4 text-sm">Analyzing player stats and course data...</p>
+                                        <p className="mt-4 text-sm">Analyzing stats and course fit...</p>
                                     </div>
                                 )}
 
@@ -441,7 +438,7 @@ Base predictions on actual strokes gained data and course fit, not just rankings
                                         </div>
 
                                         <div className="bg-white rounded-lg shadow-lg p-4">
-                                            <h2 className="text-lg font-bold mb-4">🎯 Top 10 Stats-Based Picks</h2>
+                                            <h2 className="text-lg font-bold mb-4">🎯 Top 10 Picks</h2>
                                             <div className="space-y-3">
                                                 {predictions.topPicks.map((pick, i) => (
                                                     <div key={i} className="border-l-4 border-green-600 bg-gray-50 p-3 rounded-r-lg">
@@ -466,13 +463,13 @@ Base predictions on actual strokes gained data and course fit, not just rankings
 
                                         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-4">
                                             <p className="text-xs text-blue-800">
-                                                <strong>Data Sources:</strong> Predictions based on official tour stats, DataGolf strokes gained metrics, current form, course history, and betting markets.
+                                                <strong>Data:</strong> Based on official stats, strokes gained metrics, form, and odds.
                                             </p>
                                         </div>
 
                                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mt-2">
                                             <p className="text-xs text-yellow-800">
-                                                <strong>Disclaimer:</strong> AI predictions for entertainment. Always do your own research.
+                                                <strong>Disclaimer:</strong> Entertainment only. Do your own research.
                                             </p>
                                         </div>
                                     </>
@@ -480,7 +477,7 @@ Base predictions on actual strokes gained data and course fit, not just rankings
                             </>
                         )}
 
-                        <div className="mt-6 text-center text-xs text-gray-600"><p>Powered by Claude AI with real-time data</p></div>
+                        <div className="mt-6 text-center text-xs text-gray-600"><p>Powered by Claude AI</p></div>
                     </div>
                 </div>
             );
