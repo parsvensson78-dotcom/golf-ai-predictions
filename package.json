@@ -1,0 +1,8 @@
+{
+  "name": "golf-ai-assistant",
+  "version": "1.0.0",
+  "description": "Golf news and predictions AI assistant",
+  "dependencies": {
+    "node-fetch": "^2.6.7"
+  }
+}
