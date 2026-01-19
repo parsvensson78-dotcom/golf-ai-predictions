@@ -1,6 +1,7 @@
-const fetch = require('node-fetch');
-
 exports.handler = async (event, context) => {
+  // Set longer timeout
+  context.callbackWaitsForEmptyEventLoop = false;
+
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
@@ -23,6 +24,14 @@ exports.handler = async (event, context) => {
   try {
     const { api_key, messages, max_tokens, tools } = JSON.parse(event.body);
 
+    if (!api_key) {
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: 'API key is required' })
+      };
+    }
+
     const requestBody = {
       model: 'claude-sonnet-4-20250514',
       max_tokens: max_tokens || 1000,
@@ -32,6 +41,8 @@ exports.handler = async (event, context) => {
     if (tools && tools.length > 0) {
       requestBody.tools = tools;
     }
+
+    console.log('Making request to Anthropic API...');
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -43,16 +54,23 @@ exports.handler = async (event, context) => {
       body: JSON.stringify(requestBody)
     });
 
+    console.log('Response status:', response.status);
+
     const data = await response.json();
 
     if (!response.ok) {
+      console.error('API Error:', data);
       return {
         statusCode: response.status,
         headers,
-        body: JSON.stringify({ error: data })
+        body: JSON.stringify({ 
+          error: data.error?.message || 'API request failed',
+          details: data
+        })
       };
     }
 
+    console.log('Success!');
     return {
       statusCode: 200,
       headers,
@@ -60,10 +78,14 @@ exports.handler = async (event, context) => {
     };
 
   } catch (error) {
+    console.error('Function error:', error);
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: error.message })
+      body: JSON.stringify({ 
+        error: error.message,
+        stack: error.stack
+      })
     };
   }
 };
