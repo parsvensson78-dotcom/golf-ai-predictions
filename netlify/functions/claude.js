@@ -1,5 +1,4 @@
 exports.handler = async (event, context) => {
-  // Set longer timeout
   context.callbackWaitsForEmptyEventLoop = false;
 
   const headers = {
@@ -38,8 +37,18 @@ exports.handler = async (event, context) => {
       messages: messages
     };
 
+    // Add both web_search and web_fetch tools
     if (tools && tools.length > 0) {
-      requestBody.tools = tools;
+      requestBody.tools = [
+        {
+          "type": "web_search_20250305",
+          "name": "web_search"
+        },
+        {
+          "type": "web_fetch_20250305",
+          "name": "web_fetch"
+        }
+      ];
     }
 
     console.log('Making request to Anthropic API...');
@@ -88,4 +97,4 @@ exports.handler = async (event, context) => {
       })
     };
   }
-};
+}; 
