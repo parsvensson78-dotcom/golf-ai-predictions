@@ -136,13 +136,11 @@ JSON:
 
             const shouldShowPredictions = () => {
                 const now = new Date();
-                const dayOfWeek = now.getDay(); // 0=Sunday, 1=Monday, 2=Tuesday
-                // Only show predictions Wed-Sun (3,4,5,6,0)
+                const dayOfWeek = now.getDay();
                 return dayOfWeek >= 3 || dayOfWeek === 0;
             };
 
             const fetchPredictions = async (tour) => {
-                // Check if we should show predictions
                 if (!shouldShowPredictions()) {
                     setPredictions({ comeSoonMessage: true });
                     return;
@@ -159,10 +157,21 @@ JSON:
                             role: "user",
                             content: `Search ${tourName} this week tournament.
 
+CRITICAL: Find VALUE PICKS, not just favorites!
+
+Strategy:
+1. Look at odds 20/1 or higher (avoid short-priced favorites)
+2. Match player strengths to course needs (length, accuracy, putting surface, wind)
+3. Find players with recent good form (top 20 finishes last 3 weeks)
+4. Prioritize course history (previous wins/top 10s here)
+5. Look for value - players whose odds don't match their course fit
+
 Return JSON ONLY:
-{"tournament":"Name","course":"Course","location":"City","dates":"Jan 23-26","conditions":"Brief","topPicks":[{"rank":1,"player":"Name","odds":"12/1","why":"Brief"},{"rank":2,"player":"Name","odds":"15/1","why":"Brief"},{"rank":3,"player":"Name","odds":"18/1","why":"Brief"},{"rank":4,"player":"Name","odds":"20/1","why":"Brief"},{"rank":5,"player":"Name","odds":"25/1","why":"Brief"}]}`
+{"tournament":"Name","course":"Course","location":"City","dates":"Jan 23-26","conditions":"Brief","valuePicks":[{"rank":1,"player":"Name","odds":"25/1 or better","why":"Stats show X skill matches course need Y, recent form Z"},{"rank":2,"player":"Name","odds":"30/1","why":"Won here before, good form"},{"rank":3,"player":"Name","odds":"35/1","why":"Stats-based reason"},{"rank":4,"player":"Name","odds":"40/1","why":"Reason"},{"rank":5,"player":"Name","odds":"50/1","why":"Dark horse reason"}]}
+
+Find SLEEPERS and VALUE, not chalk picks. Higher odds = better.`
                         }
-                    ], 1000);
+                    ], 1100);
 
                     const fullResponse = data.content
                         .map(item => (item.type === "text" ? item.text : ""))
@@ -176,14 +185,15 @@ Return JSON ONLY:
                     try {
                         predictionsData = JSON.parse(cleanResponse);
                         
-                        if (predictionsData.topPicks) {
-                            predictionsData.topPicks = predictionsData.topPicks.map(pick => ({
+                        // Rename valuePicks to topPicks for compatibility
+                        if (predictionsData.valuePicks) {
+                            predictionsData.topPicks = predictionsData.valuePicks.map(pick => ({
                                 rank: pick.rank,
                                 player: pick.player,
                                 odds: pick.odds,
-                                reasoning: pick.why || pick.reasoning || 'Good course fit',
-                                keyStrengths: pick.strengths || ['Course fit', 'Form'],
-                                confidence: pick.rank <= 3 ? 'high' : 'medium'
+                                reasoning: pick.why || pick.reasoning || 'Value play',
+                                keyStrengths: pick.strengths || ['Course fit', 'Value odds'],
+                                confidence: pick.rank <= 2 ? 'high' : 'medium'
                             }));
                         }
                         
@@ -238,7 +248,7 @@ Return JSON ONLY:
                                     <div className="w-10 h-10 sm:w-12 sm:h-12 bg-green-600 rounded-full flex items-center justify-center text-white text-xl sm:text-2xl">⛳</div>
                                     <div>
                                         <h1 className="text-xl sm:text-3xl font-bold text-gray-800">Golf AI</h1>
-                                        <p className="text-xs sm:text-base text-gray-600">Latest News & Predictions</p>
+                                        <p className="text-xs sm:text-base text-gray-600">News & Value Picks</p>
                                     </div>
                                 </div>
                                 {apiKeyStored && (
@@ -254,7 +264,7 @@ Return JSON ONLY:
                             {apiKeyStored && (
                                 <div className="flex gap-2 border-b border-gray-200">
                                     <button onClick={() => setActiveTab('news')} className={`px-4 py-2 font-semibold text-sm ${activeTab === 'news' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>📰 News</button>
-                                    <button onClick={() => { setActiveTab('predictions'); if (!predictions) fetchPredictions('pga'); }} className={`px-4 py-2 font-semibold text-sm ${activeTab === 'predictions' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>🎯 Predictions</button>
+                                    <button onClick={() => { setActiveTab('predictions'); if (!predictions) fetchPredictions('pga'); }} className={`px-4 py-2 font-semibold text-sm ${activeTab === 'predictions' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>🎯 Value Picks</button>
                                 </div>
                             )}
                         </div>
@@ -352,7 +362,7 @@ Return JSON ONLY:
                                 {predictionsLoading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="mt-4 text-sm">Loading predictions...</p>
+                                        <p className="mt-4 text-sm">Finding value picks...</p>
                                     </div>
                                 )}
 
@@ -360,8 +370,8 @@ Return JSON ONLY:
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="text-6xl mb-4">⛳</div>
                                         <h2 className="text-2xl font-bold text-gray-800 mb-3">Predictions Coming Soon</h2>
-                                        <p className="text-gray-600 mb-4">Tournament predictions are updated every <strong>Wednesday</strong> for the week's tournament starting Thursday.</p>
-                                        <p className="text-gray-600">Check back on <strong>Wednesday</strong> for this week's picks!</p>
+                                        <p className="text-gray-600 mb-4">Value picks are updated every <strong>Wednesday</strong> for the week's tournament starting Thursday.</p>
+                                        <p className="text-gray-600">Check back on <strong>Wednesday</strong> for this week's value plays!</p>
                                         <div className="mt-6 p-4 bg-blue-50 rounded-lg">
                                             <p className="text-sm text-blue-800"><strong>Schedule:</strong> Predictions available Wed-Sun each week</p>
                                         </div>
@@ -385,18 +395,23 @@ Return JSON ONLY:
                                             )}
                                         </div>
 
+                                        <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-4 mb-4">
+                                            <h3 className="text-sm font-bold text-green-800 mb-2">💎 VALUE STRATEGY</h3>
+                                            <p className="text-xs text-green-700">These picks prioritize <strong>value odds (20/1+)</strong> matched with <strong>stats-based course fit</strong>. Not just favorites - we're hunting sleepers with real win potential based on data.</p>
+                                        </div>
+
                                         <div className="bg-white rounded-lg shadow-lg p-4">
-                                            <h2 className="text-lg font-bold mb-4">🎯 Top 5 Picks</h2>
+                                            <h2 className="text-lg font-bold mb-4">💰 Top 5 Value Picks</h2>
                                             <div className="space-y-3">
                                                 {predictions.topPicks && predictions.topPicks.map((pick, i) => (
-                                                    <div key={i} className="border-l-4 border-green-600 bg-gray-50 p-3 rounded-r-lg">
+                                                    <div key={i} className="border-l-4 border-green-600 bg-gradient-to-r from-gray-50 to-green-50 p-3 rounded-r-lg">
                                                         <div className="flex gap-3">
                                                             <div className={`w-10 h-10 ${getRankColor(pick.rank)} rounded-full flex items-center justify-center font-bold`}>{pick.rank}</div>
                                                             <div className="flex-1">
                                                                 <div className="flex justify-between mb-2 flex-wrap gap-2">
                                                                     <h3 className="text-base font-bold">{pick.player}</h3>
                                                                     <div className="flex gap-2">
-                                                                        {pick.odds && <span className="px-2 py-1 bg-purple-100 text-purple-800 rounded-full text-xs">{pick.odds}</span>}
+                                                                        {pick.odds && <span className="px-3 py-1 bg-green-600 text-white rounded-full text-sm font-bold">{pick.odds}</span>}
                                                                         {pick.confidence && <span className={`px-2 py-1 rounded-full text-xs ${getConfidenceColor(pick.confidence)}`}>{pick.confidence}</span>}
                                                                     </div>
                                                                 </div>
@@ -411,7 +426,7 @@ Return JSON ONLY:
 
                                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mt-4">
                                             <p className="text-xs text-yellow-800">
-                                                <strong>Note:</strong> Predictions updated Wed for Thu-Sun tournaments. Entertainment only.
+                                                <strong>Strategy:</strong> Value plays focus on odds 20/1+ with stats-based course fit. Higher risk, higher reward. Always bet responsibly.
                                             </p>
                                         </div>
                                     </>
