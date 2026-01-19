@@ -155,31 +155,18 @@ JSON only:
                     const data = await callClaudeAPI([
                         {
                             role: "user",
-                            content: `Find ${tournamentWeek} ${tourName} tournament (usually Thursday-Sunday).
+                            content: `${tourName} tournament this week (Thu-Sun).
 
-CRITICAL: 
-1. First search for the OFFICIAL TOURNAMENT FIELD/PLAYERS LIST
-2. Verify the player is IN THE FIELD before including them
-3. Only pick from CONFIRMED PARTICIPANTS
+Search for: tournament name, field list, course, conditions, odds.
 
-Search for:
-- Official tournament name and field
-- Course details and recent conditions
-- Weather forecast for tournament days
-- Player recent form (last 3 weeks)
-- Course history for returning players
-- Current betting odds
+CRITICAL: Only pick players IN THE ACTUAL FIELD.
 
-Predict TOP 10 from ACTUAL FIELD based on:
-- Stats that match course needs
-- Recent form and momentum
-- Course history (if applicable)
-- Value in odds
+Top 10 picks from field based on form, stats, course fit.
 
-JSON only:
-{"tournament":"Name","course":"Course","location":"Location","dates":"Dates","courseAnalysis":{"type":"Type","length":"Yards","par":"Par","conditions":"Conditions","keyFactors":["Factor1","Factor2","Factor3"]},"topPicks":[{"rank":1,"player":"Name (VERIFIED IN FIELD)","odds":"Odds","reasoning":"Stats-based analysis","keyStrengths":["Strength1","Strength2"],"confidence":"high"}]}`
+JSON:
+{"tournament":"Name","course":"Course","location":"Location","dates":"Dates","courseAnalysis":{"type":"Type","length":"Yards","par":"Par","conditions":"Conditions","keyFactors":["Factor1","Factor2"]},"topPicks":[{"rank":1,"player":"Name","odds":"Odds","reasoning":"Why","keyStrengths":["Strength1"],"confidence":"high"}]}`
                         }
-                    ], 2200);
+                    ], 1800);
 
                     const fullResponse = data.content
                         .map(item => (item.type === "text" ? item.text : ""))
