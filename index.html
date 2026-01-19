@@ -59,9 +59,10 @@
             };
 
             const extractJSON = (text) => {
-                const jsonMatch = text.match(/\{[\s\S]*\}/);
-                if (jsonMatch) {
-                    return jsonMatch[0];
+                const jsonStart = text.indexOf('{');
+                const jsonEnd = text.lastIndexOf('}');
+                if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                    return text.substring(jsonStart, jsonEnd + 1);
                 }
                 return text;
             };
@@ -96,23 +97,23 @@
 
                 try {
                     let query = '';
-                    if (type === 'pga') query = 'PGA Tour news last 48 hours';
-                    else if (type === 'majors') query = 'golf majors news recent';
-                    else if (type === 'european') query = 'DP World Tour news last 48 hours';
-                    else if (type === 'players') query = 'golf players news recent';
-                    else query = 'golf news last 48 hours';
+                    if (type === 'pga') query = 'PGA Tour latest';
+                    else if (type === 'majors') query = 'golf majors';
+                    else if (type === 'european') query = 'DP World Tour latest';
+                    else if (type === 'players') query = 'golf players';
+                    else query = 'golf latest';
 
                     const data = await callClaudeAPI([
                         {
                             role: "user",
                             content: `Search: ${query}
 
-Find top 3 stories from LAST 48 HOURS.
+3 recent stories. Brief.
 
-JSON only:
-{"summary":"Brief overview","stories":[{"title":"Title","summary":"What happened","source":"Source"}]}`
+JSON:
+{"summary":"Overview","stories":[{"title":"Title","summary":"What happened","source":"Source"}]}`
                         }
-                    ], 900);
+                    ], 700);
 
                     const fullResponse = data.content
                         .map(item => (item.type === "text" ? item.text : ""))
@@ -127,7 +128,7 @@ JSON only:
                     setNews(newsData.stories || []);
                 } catch (err) {
                     console.error("Error:", err);
-                    setError(`Error: ${err.message}`);
+                    setError(`${err.message} - Try refresh`);
                 } finally {
                     setLoading(false);
                 }
@@ -143,18 +144,18 @@ JSON only:
                     const data = await callClaudeAPI([
                         {
                             role: "user",
-                            content: `Search for this week's ${tourName} tournament (Thursday-Sunday).
+                            content: `${tourName} this week tournament.
 
-Find: tournament, course, field, conditions, odds.
+Find: name, course, field, odds.
 
-Pick 10 players FROM THE FIELD based on stats and course fit.
+10 players FROM FIELD. Stats + course fit.
 
-Return ONLY this JSON structure with no extra text:
-{"tournament":"Tournament Name","course":"Course Name","location":"City, Country","dates":"Jan XX-XX","courseAnalysis":{"type":"links","length":"7000 yards","par":"72","conditions":"windy, firm","keyFactors":["driving","wind play"]},"topPicks":[{"rank":1,"player":"Player Name","odds":"10-1","reasoning":"Good driver, plays well in wind","keyStrengths":["driving distance","wind"],"confidence":"high"}]}
+JSON example:
+{"tournament":"Name","course":"Course","location":"City","dates":"Jan 16-19","courseAnalysis":{"type":"links","length":"7200","par":"72","conditions":"windy","keyFactors":["driving","wind"]},"topPicks":[{"rank":1,"player":"Name","odds":"12-1","reasoning":"Stats reason","keyStrengths":["skill1","skill2"],"confidence":"high"}]}
 
-Include all 10 players with ranks 1-10.`
+All 10 players, ranks 1-10.`
                         }
-                    ], 1800);
+                    ], 1600);
 
                     const fullResponse = data.content
                         .map(item => (item.type === "text" ? item.text : ""))
@@ -162,30 +163,20 @@ Include all 10 players with ranks 1-10.`
                         .join("\n");
 
                     let cleanResponse = fullResponse.replace(/```json\n?|\n?```/g, "").trim();
-                    
-                    const jsonStart = cleanResponse.indexOf('{');
-                    if (jsonStart > 0) {
-                        cleanResponse = cleanResponse.substring(jsonStart);
-                    }
-                    
-                    const jsonEnd = cleanResponse.lastIndexOf('}');
-                    if (jsonEnd > 0) {
-                        cleanResponse = cleanResponse.substring(0, jsonEnd + 1);
-                    }
+                    cleanResponse = extractJSON(cleanResponse);
                     
                     let predictionsData;
                     try {
                         predictionsData = JSON.parse(cleanResponse);
                     } catch (parseError) {
-                        console.error('JSON parse failed:', parseError);
-                        console.error('Attempted to parse:', cleanResponse);
-                        throw new Error('Invalid response format. Click refresh to try again.');
+                        console.error('Parse failed:', parseError);
+                        throw new Error('Invalid format. Refresh to retry.');
                     }
                     
                     setPredictions(predictionsData);
                 } catch (err) {
                     console.error("Error:", err);
-                    setError(`${err.message} - Try refreshing.`);
+                    setError(`${err.message}`);
                 } finally {
                     setPredictionsLoading(false);
                 }
@@ -219,7 +210,7 @@ Include all 10 players with ranks 1-10.`
                                     <div className="w-10 h-10 sm:w-12 sm:h-12 bg-green-600 rounded-full flex items-center justify-center text-white text-xl sm:text-2xl">⛳</div>
                                     <div>
                                         <h1 className="text-xl sm:text-3xl font-bold text-gray-800">Golf AI</h1>
-                                        <p className="text-xs sm:text-base text-gray-600">News & Field-Verified Picks</p>
+                                        <p className="text-xs sm:text-base text-gray-600">Latest News & Predictions</p>
                                     </div>
                                 </div>
                                 {apiKeyStored && (
@@ -284,20 +275,20 @@ Include all 10 players with ranks 1-10.`
 
                                 {!news.length && !loading && (
                                     <div className="bg-white rounded-lg shadow-lg p-6 text-center">
-                                        <p className="text-sm text-gray-600">Select a category for news from the last 48 hours</p>
+                                        <p className="text-sm text-gray-600">Select a category for latest news</p>
                                     </div>
                                 )}
 
                                 {loading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="mt-4 text-sm">Searching...</p>
+                                        <p className="mt-4 text-sm">Loading...</p>
                                     </div>
                                 )}
 
                                 {summary && !loading && (
                                     <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
-                                        <h2 className="text-lg font-bold mb-2">📰 Last 48 Hours</h2>
+                                        <h2 className="text-lg font-bold mb-2">📰 Latest</h2>
                                         <p className="text-sm text-gray-700">{summary}</p>
                                     </div>
                                 )}
@@ -333,7 +324,7 @@ Include all 10 players with ranks 1-10.`
                                 {predictionsLoading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="mt-4 text-sm">Verifying tournament field and analyzing stats...</p>
+                                        <p className="mt-4 text-sm">Analyzing field and stats...</p>
                                     </div>
                                 )}
 
@@ -348,15 +339,15 @@ Include all 10 players with ranks 1-10.`
                                             {predictions.courseAnalysis && (
                                                 <>
                                                     <div className="mb-3"><p className="text-xs text-gray-600 mb-1">Conditions</p><p className="text-sm">{predictions.courseAnalysis.conditions}</p></div>
-                                                    <div><p className="text-xs text-gray-600 mb-1">Key Success Factors</p><div className="flex gap-2 flex-wrap">{predictions.courseAnalysis.keyFactors.map((f, i) => <span key={i} className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs">{f}</span>)}</div></div>
+                                                    <div><p className="text-xs text-gray-600 mb-1">Key Factors</p><div className="flex gap-2 flex-wrap">{predictions.courseAnalysis.keyFactors.map((f, i) => <span key={i} className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs">{f}</span>)}</div></div>
                                                 </>
                                             )}
                                         </div>
 
                                         <div className="bg-white rounded-lg shadow-lg p-4">
-                                            <h2 className="text-lg font-bold mb-4">🎯 Top 10 Picks (Verified Field)</h2>
+                                            <h2 className="text-lg font-bold mb-4">🎯 Top 10 Picks</h2>
                                             <div className="space-y-3">
-                                                {predictions.topPicks.map((pick, i) => (
+                                                {predictions.topPicks && predictions.topPicks.map((pick, i) => (
                                                     <div key={i} className="border-l-4 border-green-600 bg-gray-50 p-3 rounded-r-lg">
                                                         <div className="flex gap-3">
                                                             <div className={`w-10 h-10 ${getRankColor(pick.rank)} rounded-full flex items-center justify-center font-bold`}>{pick.rank}</div>
@@ -379,13 +370,13 @@ Include all 10 players with ranks 1-10.`
 
                                         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-4">
                                             <p className="text-xs text-blue-800">
-                                                <strong>✓ Field Verified:</strong> All picks confirmed to be in the tournament field. Based on official stats, recent form, course fit, and value odds.
+                                                <strong>Field Verified:</strong> Picks from tournament field based on stats and course fit.
                                             </p>
                                         </div>
 
                                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mt-2">
                                             <p className="text-xs text-yellow-800">
-                                                <strong>Disclaimer:</strong> Entertainment only. Always research before betting.
+                                                <strong>Disclaimer:</strong> Entertainment only. Research before betting.
                                             </p>
                                         </div>
                                     </>
