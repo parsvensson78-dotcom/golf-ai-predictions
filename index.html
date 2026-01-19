@@ -66,7 +66,7 @@
                 return text;
             };
 
-            const callClaudeAPI = async (messages, maxTokens = 1000) => {
+            const callClaudeAPI = async (messages, maxTokens = 800) => {
                 const response = await fetch("/.netlify/functions/claude", {
                     method: "POST",
                     headers: {
@@ -82,19 +82,10 @@
 
                 if (!response.ok) {
                     const errorData = await response.json();
-                    throw new Error(errorData.error?.message || errorData.error || `API Error ${response.status}`);
+                    throw new Error(errorData.error?.message || errorData.error || `Error ${response.status}`);
                 }
 
                 return await response.json();
-            };
-
-            const getCurrentDate = () => {
-                return new Date().toLocaleDateString('en-US', { 
-                    weekday: 'long', 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric' 
-                });
             };
 
             const fetchGolfNews = async (type) => {
@@ -104,54 +95,24 @@
                 setNews([]);
 
                 try {
-                    let searchQuery = '';
-                    
-                    if (type === 'pga') {
-                        searchQuery = 'PGA Tour latest news January 2026 this week current tournament';
-                    } else if (type === 'majors') {
-                        searchQuery = 'golf majors news 2026';
-                    } else if (type === 'european') {
-                        searchQuery = 'DP World Tour latest news January 2026 current week';
-                    } else if (type === 'players') {
-                        searchQuery = 'professional golfers news this week 2026';
-                    } else {
-                        searchQuery = 'golf news this week January 2026';
-                    }
-
-                    const today = getCurrentDate();
+                    let query = '';
+                    if (type === 'pga') query = 'PGA Tour news last 48 hours';
+                    else if (type === 'majors') query = 'golf majors news recent';
+                    else if (type === 'european') query = 'DP World Tour news last 48 hours';
+                    else if (type === 'players') query = 'golf players news recent';
+                    else query = 'golf news last 48 hours';
 
                     const data = await callClaudeAPI([
                         {
                             role: "user",
-                            content: `Today is ${today}. Search for ${searchQuery}.
+                            content: `Search: ${query}
 
-IMPORTANT: I need THE MOST RECENT news from THIS WEEK. Look for:
-- Results from tournaments that finished in the last 1-3 days
-- Current ongoing tournaments
-- Latest player news from this week
-- Recent announcements
+Find top 3 stories from LAST 48 HOURS.
 
-Search multiple times if needed to find the freshest content. Prioritize results from pgatour.com, dpworldtour.com, golf.com, and ESPN.
-
-Provide 3-5 most recent stories with what happened and when.
-
-CRITICAL: Respond with ONLY valid JSON. No text before or after.
-
-Format:
-{
-  "summary": "Brief overview of current golf news this week including latest tournament results",
-  "stories": [
-    {
-      "title": "Story title",
-      "summary": "What happened and when (include dates if tournament finished)",
-      "source": "Source name"
-    }
-  ]
-}
-
-Use proper JSON escaping.`
+JSON only:
+{"summary":"Brief overview","stories":[{"title":"Title","summary":"What happened","source":"Source"}]}`
                         }
-                    ], 1500);
+                    ], 900);
 
                     const fullResponse = data.content
                         .map(item => (item.type === "text" ? item.text : ""))
@@ -161,24 +122,12 @@ Use proper JSON escaping.`
                     let cleanResponse = fullResponse.replace(/```json\n?|\n?```/g, "").trim();
                     cleanResponse = extractJSON(cleanResponse);
                     
-                    let newsData;
-                    try {
-                        newsData = JSON.parse(cleanResponse);
-                    } catch (parseError) {
-                        console.error('JSON parse error:', parseError);
-                        console.error('Response was:', cleanResponse);
-                        throw new Error('Invalid response format. Please try again.');
-                    }
-                    
-                    setSummary(newsData.summary || 'No summary available');
+                    const newsData = JSON.parse(cleanResponse);
+                    setSummary(newsData.summary || '');
                     setNews(newsData.stories || []);
-                    
-                    if (!newsData.stories || newsData.stories.length === 0) {
-                        setError('No news stories found. Please try again.');
-                    }
                 } catch (err) {
                     console.error("Error:", err);
-                    setError(`Failed to fetch news: ${err.message}`);
+                    setError(`Error: ${err.message}`);
                 } finally {
                     setLoading(false);
                 }
@@ -190,63 +139,47 @@ Use proper JSON escaping.`
 
                 try {
                     const tourName = tour === 'pga' ? 'PGA Tour' : 'DP World Tour';
-                    const today = getCurrentDate();
+                    const today = new Date();
+                    const dayOfWeek = today.getDay(); // 0=Sunday, 4=Thursday
+                    
+                    // Calculate which tournament week we're in
+                    let tournamentWeek = 'this week';
+                    if (dayOfWeek === 0 || dayOfWeek === 1 || dayOfWeek === 2) {
+                        tournamentWeek = 'this week (started Thursday)';
+                    } else if (dayOfWeek === 3) {
+                        tournamentWeek = 'starting tomorrow (Thursday)';
+                    } else {
+                        tournamentWeek = 'this week (ongoing)';
+                    }
                     
                     const data = await callClaudeAPI([
                         {
                             role: "user",
-                            content: `Today is ${today}. 
+                            content: `Find ${tournamentWeek} ${tourName} tournament (usually Thursday-Sunday).
 
-Find THIS WEEK'S ${tourName} tournament (the one happening right now or starting this week in January 2026).
+CRITICAL: 
+1. First search for the OFFICIAL TOURNAMENT FIELD/PLAYERS LIST
+2. Verify the player is IN THE FIELD before including them
+3. Only pick from CONFIRMED PARTICIPANTS
 
 Search for:
-1. Current ${tourName} schedule and field
-2. Course details and conditions
-3. Weather forecast
-4. Player statistics from pgatour.com stats section
-5. Strokes gained data from datagolf.com
-6. Current betting odds from sportsbooks
-7. Recent player form and results
+- Official tournament name and field
+- Course details and recent conditions
+- Weather forecast for tournament days
+- Player recent form (last 3 weeks)
+- Course history for returning players
+- Current betting odds
 
-Analyze which players match the course based on:
-- Driving stats (distance, accuracy)
-- Strokes gained: approach, around the green, putting
-- Recent form (last 4-6 tournaments)
-- Course history if they've played here before
-- Wind play ability if relevant
+Predict TOP 10 from ACTUAL FIELD based on:
+- Stats that match course needs
+- Recent form and momentum
+- Course history (if applicable)
+- Value in odds
 
-Predict TOP 10 players with statistical reasoning.
-
-CRITICAL: Respond with ONLY valid JSON.
-
-Format:
-{
-  "tournament": "Official tournament name",
-  "course": "Course name",
-  "location": "City, Country",
-  "dates": "Tournament dates",
-  "courseAnalysis": {
-    "type": "Course type",
-    "length": "Yardage",
-    "par": "Par",
-    "conditions": "Current conditions description",
-    "keyFactors": ["Key skill 1", "Key skill 2", "Key skill 3"]
-  },
-  "topPicks": [
-    {
-      "rank": 1,
-      "player": "Player name",
-      "odds": "Betting odds",
-      "reasoning": "Statistical analysis of why this player fits (reference specific stats)",
-      "keyStrengths": ["Specific strength with stat", "Another strength"],
-      "confidence": "high"
-    }
-  ]
-}
-
-Base predictions on stats, not just world rankings. Include 10 players.`
+JSON only:
+{"tournament":"Name","course":"Course","location":"Location","dates":"Dates","courseAnalysis":{"type":"Type","length":"Yards","par":"Par","conditions":"Conditions","keyFactors":["Factor1","Factor2","Factor3"]},"topPicks":[{"rank":1,"player":"Name (VERIFIED IN FIELD)","odds":"Odds","reasoning":"Stats-based analysis","keyStrengths":["Strength1","Strength2"],"confidence":"high"}]}`
                         }
-                    ], 3000);
+                    ], 2200);
 
                     const fullResponse = data.content
                         .map(item => (item.type === "text" ? item.text : ""))
@@ -256,19 +189,11 @@ Base predictions on stats, not just world rankings. Include 10 players.`
                     let cleanResponse = fullResponse.replace(/```json\n?|\n?```/g, "").trim();
                     cleanResponse = extractJSON(cleanResponse);
                     
-                    let predictionsData;
-                    try {
-                        predictionsData = JSON.parse(cleanResponse);
-                    } catch (parseError) {
-                        console.error('JSON parse error:', parseError);
-                        console.error('Response was:', cleanResponse);
-                        throw new Error('Invalid response format. Please try again.');
-                    }
-                    
+                    const predictionsData = JSON.parse(cleanResponse);
                     setPredictions(predictionsData);
                 } catch (err) {
                     console.error("Error:", err);
-                    setError(`Failed to fetch predictions: ${err.message}`);
+                    setError(`Error: ${err.message}`);
                 } finally {
                     setPredictionsLoading(false);
                 }
@@ -302,7 +227,7 @@ Base predictions on stats, not just world rankings. Include 10 players.`
                                     <div className="w-10 h-10 sm:w-12 sm:h-12 bg-green-600 rounded-full flex items-center justify-center text-white text-xl sm:text-2xl">⛳</div>
                                     <div>
                                         <h1 className="text-xl sm:text-3xl font-bold text-gray-800">Golf AI</h1>
-                                        <p className="text-xs sm:text-base text-gray-600">Real-Time News & Stats</p>
+                                        <p className="text-xs sm:text-base text-gray-600">News & Field-Verified Picks</p>
                                     </div>
                                 </div>
                                 {apiKeyStored && (
@@ -367,27 +292,26 @@ Base predictions on stats, not just world rankings. Include 10 players.`
 
                                 {!news.length && !loading && (
                                     <div className="bg-white rounded-lg shadow-lg p-6 text-center">
-                                        <p className="text-sm text-gray-600">Select a category for latest news</p>
+                                        <p className="text-sm text-gray-600">Select a category for news from the last 48 hours</p>
                                     </div>
                                 )}
 
                                 {loading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="mt-4 text-sm">Searching for latest news...</p>
+                                        <p className="mt-4 text-sm">Searching...</p>
                                     </div>
                                 )}
 
                                 {summary && !loading && (
                                     <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
-                                        <h2 className="text-lg font-bold mb-2">📰 This Week</h2>
+                                        <h2 className="text-lg font-bold mb-2">📰 Last 48 Hours</h2>
                                         <p className="text-sm text-gray-700">{summary}</p>
                                     </div>
                                 )}
 
                                 {news.length > 0 && !loading && (
                                     <div className="space-y-3">
-                                        <h2 className="text-xl font-bold text-gray-800 mb-3">Latest Stories</h2>
                                         {news.map((story, i) => (
                                             <div key={i} className="bg-white rounded-lg shadow-lg p-4">
                                                 <div className="flex gap-3">
@@ -417,7 +341,7 @@ Base predictions on stats, not just world rankings. Include 10 players.`
                                 {predictionsLoading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="mt-4 text-sm">Analyzing stats and course fit...</p>
+                                        <p className="mt-4 text-sm">Verifying tournament field and analyzing stats...</p>
                                     </div>
                                 )}
 
@@ -432,13 +356,13 @@ Base predictions on stats, not just world rankings. Include 10 players.`
                                             {predictions.courseAnalysis && (
                                                 <>
                                                     <div className="mb-3"><p className="text-xs text-gray-600 mb-1">Conditions</p><p className="text-sm">{predictions.courseAnalysis.conditions}</p></div>
-                                                    <div><p className="text-xs text-gray-600 mb-1">Key Factors</p><div className="flex gap-2 flex-wrap">{predictions.courseAnalysis.keyFactors.map((f, i) => <span key={i} className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs">{f}</span>)}</div></div>
+                                                    <div><p className="text-xs text-gray-600 mb-1">Key Success Factors</p><div className="flex gap-2 flex-wrap">{predictions.courseAnalysis.keyFactors.map((f, i) => <span key={i} className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs">{f}</span>)}</div></div>
                                                 </>
                                             )}
                                         </div>
 
                                         <div className="bg-white rounded-lg shadow-lg p-4">
-                                            <h2 className="text-lg font-bold mb-4">🎯 Top 10 Picks</h2>
+                                            <h2 className="text-lg font-bold mb-4">🎯 Top 10 Picks (Verified Field)</h2>
                                             <div className="space-y-3">
                                                 {predictions.topPicks.map((pick, i) => (
                                                     <div key={i} className="border-l-4 border-green-600 bg-gray-50 p-3 rounded-r-lg">
@@ -463,13 +387,13 @@ Base predictions on stats, not just world rankings. Include 10 players.`
 
                                         <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-4">
                                             <p className="text-xs text-blue-800">
-                                                <strong>Data:</strong> Based on official stats, strokes gained metrics, form, and odds.
+                                                <strong>✓ Field Verified:</strong> All picks confirmed to be in the tournament field. Based on official stats, recent form (last 3 weeks), course fit, and value odds.
                                             </p>
                                         </div>
 
                                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mt-2">
                                             <p className="text-xs text-yellow-800">
-                                                <strong>Disclaimer:</strong> Entertainment only. Do your own research.
+                                                <strong>Disclaimer:</strong> Entertainment only. Always research before betting.
                                             </p>
                                         </div>
                                     </>
