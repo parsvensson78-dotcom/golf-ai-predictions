@@ -134,50 +134,33 @@ JSON:
                 }
             };
 
-            const getTournamentTiming = () => {
+            const shouldShowPredictions = () => {
                 const now = new Date();
-                const dayOfWeek = now.getDay(); // 0=Sunday, 1=Monday, ..., 6=Saturday
-                
-                // Monday (1): Look for this week's tournament (starts Thursday)
-                if (dayOfWeek === 1) return "NEXT tournament starting THIS Thursday";
-                
-                // Tuesday (2): Look for this week's tournament (starts Thursday)
-                if (dayOfWeek === 2) return "NEXT tournament starting THIS Thursday";
-                
-                // Wednesday (3): Look for tournament STARTING TOMORROW (Thursday)
-                if (dayOfWeek === 3) return "tournament STARTING TOMORROW Thursday";
-                
-                // Thursday (4): Current tournament that started TODAY
-                if (dayOfWeek === 4) return "tournament that STARTED TODAY Thursday";
-                
-                // Friday-Sunday (5,6,0): Current ONGOING tournament
-                if (dayOfWeek === 5 || dayOfWeek === 6 || dayOfWeek === 0) return "CURRENT ONGOING tournament (started this Thursday)";
-                
-                return "upcoming tournament";
+                const dayOfWeek = now.getDay(); // 0=Sunday, 1=Monday, 2=Tuesday
+                // Only show predictions Wed-Sun (3,4,5,6,0)
+                return dayOfWeek >= 3 || dayOfWeek === 0;
             };
 
             const fetchPredictions = async (tour) => {
+                // Check if we should show predictions
+                if (!shouldShowPredictions()) {
+                    setPredictions({ comeSoonMessage: true });
+                    return;
+                }
+
                 setPredictionsLoading(true);
                 setError('');
 
                 try {
                     const tourName = tour === 'pga' ? 'PGA Tour' : 'DP World Tour';
-                    const timing = getTournamentTiming();
-                    const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', weekday: 'long' });
                     
                     const data = await callClaudeAPI([
                         {
                             role: "user",
-                            content: `Today is ${today}. 
-
-Search ${tourName} ${timing}.
-
-IMPORTANT: Find the CORRECT tournament based on today's date. If today is Monday-Wednesday, find the tournament STARTING THIS THURSDAY. If today is Thursday-Sunday, find the ONGOING tournament.
+                            content: `Search ${tourName} this week tournament.
 
 Return JSON ONLY:
-{"tournament":"Full Tournament Name","course":"Course Name","location":"City, Country","dates":"Jan 23-26 (MUST be correct dates)","conditions":"Brief conditions","topPicks":[{"rank":1,"player":"Player Name","odds":"12/1","why":"One line"},{"rank":2,"player":"Name","odds":"15/1","why":"One line"},{"rank":3,"player":"Name","odds":"18/1","why":"One line"},{"rank":4,"player":"Name","odds":"20/1","why":"One line"},{"rank":5,"player":"Name","odds":"25/1","why":"One line"}]}
-
-5 picks. Players in field. Verify dates are correct for ${timing}.`
+{"tournament":"Name","course":"Course","location":"City","dates":"Jan 23-26","conditions":"Brief","topPicks":[{"rank":1,"player":"Name","odds":"12/1","why":"Brief"},{"rank":2,"player":"Name","odds":"15/1","why":"Brief"},{"rank":3,"player":"Name","odds":"18/1","why":"Brief"},{"rank":4,"player":"Name","odds":"20/1","why":"Brief"},{"rank":5,"player":"Name","odds":"25/1","why":"Brief"}]}`
                         }
                     ], 1000);
 
@@ -193,32 +176,29 @@ Return JSON ONLY:
                     try {
                         predictionsData = JSON.parse(cleanResponse);
                         
-                        // Expand to match expected format
                         if (predictionsData.topPicks) {
                             predictionsData.topPicks = predictionsData.topPicks.map(pick => ({
                                 rank: pick.rank,
                                 player: pick.player,
                                 odds: pick.odds,
-                                reasoning: pick.why || pick.reasoning || 'Good fit for course',
-                                keyStrengths: pick.strengths || ['Course fit', 'Recent form'],
+                                reasoning: pick.why || pick.reasoning || 'Good course fit',
+                                keyStrengths: pick.strengths || ['Course fit', 'Form'],
                                 confidence: pick.rank <= 3 ? 'high' : 'medium'
                             }));
                         }
                         
-                        // Add course analysis if missing
                         if (!predictionsData.courseAnalysis) {
                             predictionsData.courseAnalysis = {
                                 type: 'Golf course',
                                 length: '7000+ yards',
                                 par: '72',
-                                conditions: predictionsData.conditions || 'Standard conditions',
+                                conditions: predictionsData.conditions || 'Standard',
                                 keyFactors: ['Driving', 'Approach', 'Putting']
                             };
                         }
                     } catch (parseError) {
                         console.error('Parse failed:', parseError);
-                        console.error('Response:', cleanResponse);
-                        throw new Error('Could not parse response. Try refresh.');
+                        throw new Error('Parse error. Refresh to retry.');
                     }
                     
                     setPredictions(predictionsData);
@@ -372,11 +352,23 @@ Return JSON ONLY:
                                 {predictionsLoading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="mt-4 text-sm">Finding correct tournament for this week...</p>
+                                        <p className="mt-4 text-sm">Loading predictions...</p>
                                     </div>
                                 )}
 
-                                {predictions && !predictionsLoading && (
+                                {predictions && predictions.comeSoonMessage && (
+                                    <div className="bg-white rounded-lg shadow-lg p-8 text-center">
+                                        <div className="text-6xl mb-4">⛳</div>
+                                        <h2 className="text-2xl font-bold text-gray-800 mb-3">Predictions Coming Soon</h2>
+                                        <p className="text-gray-600 mb-4">Tournament predictions are updated every <strong>Wednesday</strong> for the week's tournament starting Thursday.</p>
+                                        <p className="text-gray-600">Check back on <strong>Wednesday</strong> for this week's picks!</p>
+                                        <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+                                            <p className="text-sm text-blue-800"><strong>Schedule:</strong> Predictions available Wed-Sun each week</p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {predictions && !predictions.comeSoonMessage && !predictionsLoading && (
                                     <>
                                         <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
                                             <h2 className="text-lg font-bold mb-3">{predictions.tournament}</h2>
@@ -419,7 +411,7 @@ Return JSON ONLY:
 
                                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mt-4">
                                             <p className="text-xs text-yellow-800">
-                                                <strong>Note:</strong> Predictions update Wed for Thu-Sun tournaments. Based on field, stats & odds. Entertainment only.
+                                                <strong>Note:</strong> Predictions updated Wed for Thu-Sun tournaments. Entertainment only.
                                             </p>
                                         </div>
                                     </>
