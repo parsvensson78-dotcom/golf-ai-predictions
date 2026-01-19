@@ -10,4 +10,4 @@
   status = 200
 
 [functions."claude"]
-  timeout = 30
+  timeout = 60
