@@ -157,21 +157,40 @@ JSON:
                             role: "user",
                             content: `Search ${tourName} this week tournament.
 
-CRITICAL: Find VALUE PICKS, not just favorites!
+CRITICAL ANALYSIS STEPS:
 
-Strategy:
-1. Look at odds 20/1 or higher (avoid short-priced favorites)
-2. Match player strengths to course needs (length, accuracy, putting surface, wind)
-3. Find players with recent good form (top 20 finishes last 3 weeks)
-4. Prioritize course history (previous wins/top 10s here)
-5. Look for value - players whose odds don't match their course fit
+1. WEATHER FORECAST (Thu-Sun):
+   - Wind: Speed/direction each day
+   - Rain: Timing and amounts
+   - Temperature: Cold/heat impacts
+   - Playing conditions: Soft/firm/wet
+
+2. COURSE SETUP:
+   - Type (links/parkland/desert)
+   - Length and par
+   - Green firmness expected
+   - Rough thickness
+   - Key hole challenges
+
+3. WEATHER-ADJUSTED PLAYER SELECTION:
+   - If WINDY (15+ mph): Prioritize low-ball hitters, links experience
+   - If RAIN/WET: Prioritize long hitters, soft-condition specialists
+   - If COLD (<50°F): Prioritize experienced players, less distance
+   - If HOT/DRY: Prioritize distance, firm-condition players
+
+4. VALUE PICKS CRITERIA:
+   - Odds 20/1+ (no favorites)
+   - Stats match course + weather needs
+   - Recent form (top 20 last 3 weeks)
+   - Course history if available
+   - Weather-game specialists
 
 Return JSON ONLY:
-{"tournament":"Name","course":"Course","location":"City","dates":"Jan 23-26","conditions":"Brief","valuePicks":[{"rank":1,"player":"Name","odds":"25/1 or better","why":"Stats show X skill matches course need Y, recent form Z"},{"rank":2,"player":"Name","odds":"30/1","why":"Won here before, good form"},{"rank":3,"player":"Name","odds":"35/1","why":"Stats-based reason"},{"rank":4,"player":"Name","odds":"40/1","why":"Reason"},{"rank":5,"player":"Name","odds":"50/1","why":"Dark horse reason"}]}
+{"tournament":"Name","course":"Course","location":"City","dates":"Jan 23-26","weather":{"forecast":"Thu-Sun forecast summary","wind":"Average mph","impact":"How weather changes course"},"conditions":"Course setup + weather combined","valuePicks":[{"rank":1,"player":"Name","odds":"25/1+","why":"Weather-adjusted reason: X stat matches Y condition"},{"rank":2,"player":"Name","odds":"30/1+","why":"Stats + weather fit"},{"rank":3,"player":"Name","odds":"35/1+","why":"Reason"},{"rank":4,"player":"Name","odds":"40/1+","why":"Reason"},{"rank":5,"player":"Name","odds":"50/1+","why":"Dark horse"}]}
 
-Find SLEEPERS and VALUE, not chalk picks. Higher odds = better.`
+FOCUS: Weather is CRITICAL. Match players to expected conditions. Higher odds = better.`
                         }
-                    ], 1100);
+                    ], 1200);
 
                     const fullResponse = data.content
                         .map(item => (item.type === "text" ? item.text : ""))
@@ -185,14 +204,13 @@ Find SLEEPERS and VALUE, not chalk picks. Higher odds = better.`
                     try {
                         predictionsData = JSON.parse(cleanResponse);
                         
-                        // Rename valuePicks to topPicks for compatibility
                         if (predictionsData.valuePicks) {
                             predictionsData.topPicks = predictionsData.valuePicks.map(pick => ({
                                 rank: pick.rank,
                                 player: pick.player,
                                 odds: pick.odds,
                                 reasoning: pick.why || pick.reasoning || 'Value play',
-                                keyStrengths: pick.strengths || ['Course fit', 'Value odds'],
+                                keyStrengths: pick.strengths || ['Course fit', 'Weather game'],
                                 confidence: pick.rank <= 2 ? 'high' : 'medium'
                             }));
                         }
@@ -205,6 +223,12 @@ Find SLEEPERS and VALUE, not chalk picks. Higher odds = better.`
                                 conditions: predictionsData.conditions || 'Standard',
                                 keyFactors: ['Driving', 'Approach', 'Putting']
                             };
+                        }
+                        
+                        // Add weather to course analysis
+                        if (predictionsData.weather) {
+                            predictionsData.courseAnalysis.weather = predictionsData.weather.forecast;
+                            predictionsData.courseAnalysis.weatherImpact = predictionsData.weather.impact;
                         }
                     } catch (parseError) {
                         console.error('Parse failed:', parseError);
@@ -362,7 +386,7 @@ Find SLEEPERS and VALUE, not chalk picks. Higher odds = better.`
                                 {predictionsLoading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="mt-4 text-sm">Finding value picks...</p>
+                                        <p className="mt-4 text-sm">Analyzing weather & course conditions...</p>
                                     </div>
                                 )}
 
@@ -371,7 +395,7 @@ Find SLEEPERS and VALUE, not chalk picks. Higher odds = better.`
                                         <div className="text-6xl mb-4">⛳</div>
                                         <h2 className="text-2xl font-bold text-gray-800 mb-3">Predictions Coming Soon</h2>
                                         <p className="text-gray-600 mb-4">Value picks are updated every <strong>Wednesday</strong> for the week's tournament starting Thursday.</p>
-                                        <p className="text-gray-600">Check back on <strong>Wednesday</strong> for this week's value plays!</p>
+                                        <p className="text-gray-600">Check back on <strong>Wednesday</strong> for this week's weather-adjusted picks!</p>
                                         <div className="mt-6 p-4 bg-blue-50 rounded-lg">
                                             <p className="text-sm text-blue-800"><strong>Schedule:</strong> Predictions available Wed-Sun each week</p>
                                         </div>
@@ -387,6 +411,17 @@ Find SLEEPERS and VALUE, not chalk picks. Higher odds = better.`
                                                 <div><p className="text-xs text-gray-600">Location</p><p className="font-semibold">{predictions.location}</p></div>
                                                 <div><p className="text-xs text-gray-600">Dates</p><p className="font-semibold">{predictions.dates}</p></div>
                                             </div>
+                                            
+                                            {predictions.courseAnalysis && predictions.courseAnalysis.weather && (
+                                                <div className="mb-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                                                    <p className="text-xs font-bold text-blue-800 mb-1">🌤️ Weather Forecast</p>
+                                                    <p className="text-sm text-blue-900">{predictions.courseAnalysis.weather}</p>
+                                                    {predictions.courseAnalysis.weatherImpact && (
+                                                        <p className="text-xs text-blue-700 mt-2"><strong>Impact:</strong> {predictions.courseAnalysis.weatherImpact}</p>
+                                                    )}
+                                                </div>
+                                            )}
+                                            
                                             {predictions.courseAnalysis && (
                                                 <>
                                                     <div className="mb-3"><p className="text-xs text-gray-600 mb-1">Conditions</p><p className="text-sm">{predictions.courseAnalysis.conditions}</p></div>
@@ -396,12 +431,12 @@ Find SLEEPERS and VALUE, not chalk picks. Higher odds = better.`
                                         </div>
 
                                         <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-4 mb-4">
-                                            <h3 className="text-sm font-bold text-green-800 mb-2">💎 VALUE STRATEGY</h3>
-                                            <p className="text-xs text-green-700">These picks prioritize <strong>value odds (20/1+)</strong> matched with <strong>stats-based course fit</strong>. Not just favorites - we're hunting sleepers with real win potential based on data.</p>
+                                            <h3 className="text-sm font-bold text-green-800 mb-2">💎 VALUE + WEATHER STRATEGY</h3>
+                                            <p className="text-xs text-green-700">Picks prioritize <strong>value odds (20/1+)</strong> matched with <strong>weather-adjusted course fit</strong>. Players selected based on how their game matches expected conditions.</p>
                                         </div>
 
                                         <div className="bg-white rounded-lg shadow-lg p-4">
-                                            <h2 className="text-lg font-bold mb-4">💰 Top 5 Value Picks</h2>
+                                            <h2 className="text-lg font-bold mb-4">💰 Top 5 Weather-Adjusted Value Picks</h2>
                                             <div className="space-y-3">
                                                 {predictions.topPicks && predictions.topPicks.map((pick, i) => (
                                                     <div key={i} className="border-l-4 border-green-600 bg-gradient-to-r from-gray-50 to-green-50 p-3 rounded-r-lg">
@@ -426,7 +461,7 @@ Find SLEEPERS and VALUE, not chalk picks. Higher odds = better.`
 
                                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mt-4">
                                             <p className="text-xs text-yellow-800">
-                                                <strong>Strategy:</strong> Value plays focus on odds 20/1+ with stats-based course fit. Higher risk, higher reward. Always bet responsibly.
+                                                <strong>Strategy:</strong> Value plays adjusted for weather. Wind, rain, and temperature all impact player selection. Higher risk, higher reward.
                                             </p>
                                         </div>
                                     </>
