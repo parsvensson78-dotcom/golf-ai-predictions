@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Golf AI Assistant</title>
+    <title>Golf AI - Value Picks</title>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -15,12 +15,10 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        function GolfNewsAgent() {
+        function GolfAI() {
             const [activeTab, setActiveTab] = useState('setup');
             const [apiKey, setApiKey] = useState('');
             const [apiKeyStored, setApiKeyStored] = useState(false);
-            const [news, setNews] = useState([]);
-            const [loading, setLoading] = useState(false);
             const [error, setError] = useState('');
             
             const [predictions, setPredictions] = useState(null);
@@ -48,24 +46,15 @@
                 if (stored) {
                     setApiKey(stored);
                     setApiKeyStored(true);
-                    setActiveTab('news');
+                    setActiveTab('predictions');
                 }
                 loadCachedData();
             }, []);
 
             const loadCachedData = () => {
                 try {
-                    const newsCache = localStorage.getItem('cached_news');
                     const predCache = localStorage.getItem('cached_predictions');
                     const now = Date.now();
-                    
-                    if (newsCache) {
-                        const parsed = JSON.parse(newsCache);
-                        if (now - parsed.timestamp < CACHE_DURATION) {
-                            setNews(parsed.stories || []);
-                            setTimestamps(prev => ({...prev, news: parsed.timestamp}));
-                        }
-                    }
                     
                     if (predCache) {
                         const parsed = JSON.parse(predCache);
@@ -84,7 +73,7 @@
                 if (apiKey.trim()) {
                     localStorage.setItem('anthropic_api_key', apiKey.trim());
                     setApiKeyStored(true);
-                    setActiveTab('news');
+                    setActiveTab('predictions');
                     setError('');
                 } else {
                     setError('Please enter a valid API key');
@@ -97,7 +86,6 @@
                     setApiKey('');
                     setApiKeyStored(false);
                     setActiveTab('setup');
-                    setNews([]);
                     setPredictions(null);
                     setTimestamps({});
                     setLastRequestTime({});
@@ -155,127 +143,6 @@
                     throw new Error('Response truncated - try again');
                 }
                 return data;
-            };
-
-            const fetchRSSFeed = async (url) => {
-                try {
-                    // Use CORS proxy to fetch RSS feeds
-                    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-                    const response = await fetch(proxyUrl);
-                    const text = await response.text();
-                    
-                    // Parse XML
-                    const parser = new DOMParser();
-                    const xml = parser.parseFromString(text, 'text/xml');
-                    
-                    // Check for parsing errors
-                    const parserError = xml.querySelector('parsererror');
-                    if (parserError) {
-                        throw new Error('XML parsing failed');
-                    }
-                    
-                    // Extract items (RSS 2.0 format)
-                    const items = xml.querySelectorAll('item');
-                    const stories = [];
-                    
-                    items.forEach((item, index) => {
-                        if (index < 3) { // Limit to 3 per feed
-                            const title = item.querySelector('title')?.textContent || '';
-                            const link = item.querySelector('link')?.textContent || '';
-                            const description = item.querySelector('description')?.textContent || '';
-                            const pubDate = item.querySelector('pubDate')?.textContent || '';
-                            
-                            // Clean HTML from description
-                            const tempDiv = document.createElement('div');
-                            tempDiv.innerHTML = description;
-                            const cleanDesc = tempDiv.textContent || tempDiv.innerText || '';
-                            
-                            stories.push({
-                                title: title.trim(),
-                                summary: cleanDesc.trim().substring(0, 200) + '...',
-                                url: link.trim(),
-                                date: pubDate
-                            });
-                        }
-                    });
-                    
-                    return stories;
-                } catch (err) {
-                    console.error(`RSS fetch error for ${url}:`, err);
-                    return [];
-                }
-            };
-
-            const fetchGolfNews = async () => {
-                const cacheKey = 'news';
-                const now = Date.now();
-                
-                if (timestamps[cacheKey] && now - timestamps[cacheKey] < CACHE_DURATION) {
-                    return;
-                }
-                
-                if (!canMakeRequest(cacheKey)) return;
-                
-                setLoading(true);
-                setError('');
-                setNews([]);
-
-                try {
-                    // RSS feed URLs
-                    const feeds = [
-                        { url: 'https://www.golf.com/feed/', source: 'Golf.com' },
-                        { url: 'https://www.golfchannel.com/feeds/news.rss', source: 'Golf Channel' },
-                        { url: 'https://www.espn.com/espn/rss/golf/news', source: 'ESPN Golf' }
-                    ];
-
-                    // Fetch all feeds in parallel
-                    const feedPromises = feeds.map(async (feed) => {
-                        const stories = await fetchRSSFeed(feed.url);
-                        return stories.map(story => ({
-                            ...story,
-                            source: feed.source
-                        }));
-                    });
-
-                    const results = await Promise.all(feedPromises);
-                    
-                    // Flatten and combine stories from all feeds
-                    let allStories = results.flat();
-                    
-                    // Filter for forward-looking content (tournaments, previews, upcoming)
-                    const forwardKeywords = ['preview', 'upcoming', 'this week', 'schedule', 'field', 'next', 'returns', 'tee time'];
-                    const backwardKeywords = ['wins', 'won', 'final round', 'recap', 'results', 'leaderboard'];
-                    
-                    allStories = allStories.filter(story => {
-                        const text = (story.title + ' ' + story.summary).toLowerCase();
-                        const hasForward = forwardKeywords.some(kw => text.includes(kw));
-                        const hasBackward = backwardKeywords.some(kw => text.includes(kw));
-                        return hasForward || !hasBackward; // Prefer forward-looking, or neutral
-                    });
-                    
-                    // Take top 5 stories
-                    const topStories = allStories.slice(0, 5);
-                    
-                    if (topStories.length === 0) {
-                        throw new Error('No stories found in RSS feeds');
-                    }
-                    
-                    setNews(topStories);
-                    
-                    const ts = Date.now();
-                    setTimestamps(prev => ({...prev, [cacheKey]: ts}));
-                    setLastRequestTime(prev => ({...prev, [cacheKey]: ts}));
-                    
-                    localStorage.setItem('cached_news', JSON.stringify({
-                        stories: topStories,
-                        timestamp: ts
-                    }));
-                } catch (err) {
-                    console.error('News fetch error:', err);
-                    setError(err.message || 'Failed to load news');
-                } finally {
-                    setLoading(false);
-                }
             };
 
             const shouldShowPredictions = () => {
@@ -379,24 +246,13 @@ JSON (no markdown):
                                     <div className="w-10 h-10 sm:w-12 sm:h-12 bg-green-600 rounded-full flex items-center justify-center text-white text-xl sm:text-2xl">⛳</div>
                                     <div>
                                         <h1 className="text-xl sm:text-3xl font-bold text-gray-800">Golf AI</h1>
-                                        <p className="text-xs sm:text-base text-gray-600">News & Value Picks</p>
+                                        <p className="text-xs sm:text-base text-gray-600">Value Picks & Course Analysis</p>
                                     </div>
                                 </div>
                                 {apiKeyStored && (
                                     <button onClick={clearApiKey} className="px-3 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-colors">Clear</button>
                                 )}
                             </div>
-
-                            {apiKeyStored && (
-                                <div className="flex gap-2 border-b border-gray-200">
-                                    <button onClick={() => setActiveTab('news')} className={`px-4 py-2 font-semibold text-sm ${activeTab === 'news' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>
-                                        📰 News
-                                    </button>
-                                    <button onClick={() => setActiveTab('predictions')} className={`px-4 py-2 font-semibold text-sm ${activeTab === 'predictions' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>
-                                        🎯 Value Picks
-                                    </button>
-                                </div>
-                            )}
                         </div>
 
                         {error && (
@@ -409,89 +265,27 @@ JSON (no markdown):
                             <div className="bg-white rounded-lg shadow-lg p-4 sm:p-8">
                                 <h2 className="text-xl sm:text-2xl font-bold mb-4">🔑 API Key</h2>
                                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                                    <p className="text-sm text-blue-800 mb-2"><strong>Get key:</strong></p>
+                                    <p className="text-sm text-blue-800 mb-2"><strong>Get your Anthropic API key:</strong></p>
                                     <ol className="list-decimal list-inside space-y-1 text-sm text-blue-800">
-                                        <li><a href="https://console.anthropic.com/" target="_blank" rel="noopener noreferrer" className="underline">console.anthropic.com</a></li>
-                                        <li>API Keys → Create</li>
+                                        <li><a href="https://console.anthropic.com/" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-900">console.anthropic.com</a></li>
+                                        <li>API Keys → Create Key</li>
                                         <li>Paste below</li>
                                     </ol>
                                 </div>
-                                <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && saveApiKey()} placeholder="sk-ant-..." className="w-full px-3 py-2 border rounded-lg mb-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" />
-                                <button onClick={saveApiKey} className="w-full px-4 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition-colors">Save</button>
+                                <input 
+                                    type="password" 
+                                    value={apiKey} 
+                                    onChange={(e) => setApiKey(e.target.value)} 
+                                    onKeyPress={(e) => e.key === 'Enter' && saveApiKey()} 
+                                    placeholder="sk-ant-..." 
+                                    className="w-full px-3 py-2 border rounded-lg mb-3 text-sm focus:outline-none focus:ring-2 focus:ring-green-500" 
+                                />
+                                <button 
+                                    onClick={saveApiKey} 
+                                    className="w-full px-4 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition-colors">
+                                    Save & Continue
+                                </button>
                             </div>
-                        )}
-
-                        {activeTab === 'news' && apiKeyStored && (
-                            <>
-                                {!news.length && !loading && (
-                                    <div className="bg-white rounded-lg shadow-lg p-8 text-center">
-                                        <div className="text-6xl mb-4">📰</div>
-                                        <h2 className="text-2xl font-bold text-gray-800 mb-3">Golf News</h2>
-                                        <p className="text-gray-600 mb-2">Latest from RSS feeds</p>
-                                        <p className="text-xs text-gray-500 mb-6">Golf.com, Golf Channel & ESPN • 5 stories • 12hr cache</p>
-                                        <button 
-                                            onClick={fetchGolfNews}
-                                            className="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition-colors">
-                                            Load News
-                                        </button>
-                                    </div>
-                                )}
-
-                                {loading && (
-                                    <div className="bg-white rounded-lg shadow-lg p-8 text-center">
-                                        <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="text-sm text-gray-600 mt-4">Loading RSS feeds...</p>
-                                    </div>
-                                )}
-
-                                {!loading && news.length > 0 && (
-                                    <>
-                                        <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
-                                            <div className="flex justify-between items-center mb-2">
-                                                <h2 className="text-lg font-bold">📅 Latest Golf News</h2>
-                                                {getCacheAge('news') && (
-                                                    <span className="text-xs text-gray-500">Updated {getCacheAge('news')}</span>
-                                                )}
-                                            </div>
-                                            <p className="text-sm text-gray-700 mb-3">From Golf.com, Golf Channel & ESPN RSS feeds</p>
-                                            <button 
-                                                onClick={fetchGolfNews}
-                                                disabled={loading}
-                                                className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors">
-                                                Refresh News
-                                            </button>
-                                        </div>
-
-                                        <div className="space-y-3">
-                                            {news.map((s, i) => (
-                                                <div key={i} className="bg-white rounded-lg shadow-lg p-4 hover:shadow-xl transition-shadow">
-                                                    <div className="flex gap-3">
-                                                        <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0">{i + 1}</div>
-                                                        <div className="flex-1">
-                                                            <h3 className="text-base font-bold mb-2">
-                                                                {s.url ? (
-                                                                    <a href={s.url} target="_blank" rel="noopener noreferrer" className="text-green-700 hover:text-green-900 hover:underline">
-                                                                        {s.title} 🔗
-                                                                    </a>
-                                                                ) : s.title}
-                                                            </h3>
-                                                            <p className="text-sm text-gray-700 mb-2">{s.summary}</p>
-                                                            <div className="flex items-center justify-between flex-wrap gap-2">
-                                                                <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">{s.source}</span>
-                                                                {s.url && (
-                                                                    <a href={s.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:text-blue-800 font-semibold">
-                                                                        Read More →
-                                                                    </a>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </>
-                                )}
-                            </>
                         )}
 
                         {activeTab === 'predictions' && apiKeyStored && (
@@ -515,7 +309,8 @@ JSON (no markdown):
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="text-6xl mb-4">🎯</div>
                                         <h2 className="text-2xl font-bold text-gray-800 mb-3">{selectedTour === 'pga' ? 'PGA Tour' : 'DP World Tour'} Value Picks</h2>
-                                        <p className="text-gray-600 mb-6">AI-powered betting intelligence with course analysis</p>
+                                        <p className="text-gray-600 mb-2">AI-powered betting intelligence</p>
+                                        <p className="text-sm text-gray-500 mb-6">Course analysis • Player stats • Value odds 20/1+</p>
                                         <button 
                                             onClick={() => fetchPredictions(selectedTour)}
                                             className="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition-colors">
@@ -535,7 +330,8 @@ JSON (no markdown):
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="text-6xl mb-4">⛳</div>
                                         <h2 className="text-2xl font-bold text-gray-800 mb-3">Coming Wednesday</h2>
-                                        <p className="text-gray-600">Value picks available <strong>Wed-Sun</strong></p>
+                                        <p className="text-gray-600 mb-2">Value picks available <strong>Wednesday - Sunday</strong></p>
+                                        <p className="text-sm text-gray-500">Check back when tournaments begin</p>
                                     </div>
                                 )}
 
@@ -543,7 +339,10 @@ JSON (no markdown):
                                     <>
                                         <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
                                             <div className="flex justify-between items-start mb-3">
-                                                <h2 className="text-lg font-bold">📍 {predictions.course}</h2>
+                                                <div>
+                                                    <h2 className="text-xl font-bold text-gray-900">{predictions.tournament}</h2>
+                                                    <p className="text-sm text-gray-600">{predictions.course}</p>
+                                                </div>
                                                 {getCacheAge(`pred_${selectedTour}`) && (
                                                     <span className="text-xs text-gray-500">Updated {getCacheAge(`pred_${selectedTour}`)}</span>
                                                 )}
@@ -596,7 +395,7 @@ JSON (no markdown):
                                         </div>
 
                                         <div className="bg-white rounded-lg shadow-lg p-4">
-                                            <h2 className="text-lg font-bold mb-4">💰 Value Picks</h2>
+                                            <h2 className="text-lg font-bold mb-4">💰 Value Picks (20/1+ Odds)</h2>
                                             <div className="space-y-3">
                                                 {predictions.topPicks?.map((p, i) => (
                                                     <div key={i} className="border-l-4 border-green-600 bg-gradient-to-r from-gray-50 to-green-50 p-3 rounded-r-lg hover:shadow-md transition-shadow">
@@ -646,14 +445,14 @@ JSON (no markdown):
                         )}
 
                         <div className="mt-6 text-center text-xs text-gray-600">
-                            <p>Powered by Claude AI • Cache: 12 hours</p>
+                            <p>Powered by Claude AI • 12hr cache • Data: DataGolf, {selectedTour === 'pga' ? 'PGA Tour' : 'European Tour'}, OddsChecker</p>
                         </div>
                     </div>
                 </div>
             );
         }
 
-        ReactDOM.render(<GolfNewsAgent />, document.getElementById('root'));
+        ReactDOM.render(<GolfAI />, document.getElementById('root'));
     </script>
 </body>
 </html>
