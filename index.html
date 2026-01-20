@@ -13,7 +13,7 @@
     <div id="root"></div>
     
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useCallback, useMemo } = React;
 
         function GolfNewsAgent() {
             const [activeTab, setActiveTab] = useState('setup');
@@ -31,6 +31,16 @@
             
             const [bettingFavorites, setBettingFavorites] = useState(null);
             const [bettingLoading, setBettingLoading] = useState(false);
+            
+            // NEW: Rate limiting
+            const [lastRequestTime, setLastRequestTime] = useState(0);
+            const REQUEST_COOLDOWN = 3000; // 3 seconds between requests
+            
+            // NEW: Cache timestamps
+            const [newsTimestamp, setNewsTimestamp] = useState(0);
+            const [bettingTimestamp, setBettingTimestamp] = useState(0);
+            const [predictionsTimestamp, setPredictionsTimestamp] = useState(0);
+            const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
             useEffect(() => {
                 const stored = localStorage.getItem('anthropic_api_key');
@@ -39,7 +49,51 @@
                     setApiKeyStored(true);
                     setActiveTab('news');
                 }
+                
+                // NEW: Load cached data
+                loadCachedData();
+                
+                return () => {
+                    // Cleanup (best practice)
+                };
             }, []);
+
+            const loadCachedData = () => {
+                try {
+                    const cachedNews = localStorage.getItem('cached_news');
+                    const cachedBetting = localStorage.getItem('cached_betting');
+                    const cachedPredictions = localStorage.getItem('cached_predictions');
+                    
+                    if (cachedNews) {
+                        const parsed = JSON.parse(cachedNews);
+                        if (Date.now() - parsed.timestamp < CACHE_DURATION) {
+                            setNews(parsed.stories);
+                            setSummary(parsed.summary);
+                            setNewsType(parsed.type);
+                            setNewsTimestamp(parsed.timestamp);
+                        }
+                    }
+                    
+                    if (cachedBetting) {
+                        const parsed = JSON.parse(cachedBetting);
+                        if (Date.now() - parsed.timestamp < CACHE_DURATION) {
+                            setBettingFavorites(parsed.data);
+                            setBettingTimestamp(parsed.timestamp);
+                        }
+                    }
+                    
+                    if (cachedPredictions) {
+                        const parsed = JSON.parse(cachedPredictions);
+                        if (Date.now() - parsed.timestamp < CACHE_DURATION) {
+                            setPredictions(parsed.data);
+                            setSelectedTour(parsed.tour);
+                            setPredictionsTimestamp(parsed.timestamp);
+                        }
+                    }
+                } catch (err) {
+                    console.error('Cache load error:', err);
+                }
+            };
 
             const saveApiKey = () => {
                 if (apiKey.trim()) {
@@ -55,9 +109,15 @@
             const clearApiKey = () => {
                 if (confirm('Clear your API key?')) {
                     localStorage.removeItem('anthropic_api_key');
+                    localStorage.removeItem('cached_news');
+                    localStorage.removeItem('cached_betting');
+                    localStorage.removeItem('cached_predictions');
                     setApiKey('');
                     setApiKeyStored(false);
                     setActiveTab('setup');
+                    setNews([]);
+                    setBettingFavorites(null);
+                    setPredictions(null);
                 }
             };
 
@@ -70,40 +130,65 @@
                 return text;
             };
 
-            const callClaudeAPI = async (messages, maxTokens = 1024) => {
-                const response = await fetch("/.netlify/functions/claude", {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        api_key: apiKey,
-                        max_tokens: maxTokens,
-                        messages: messages,
-                        tools: ['web_search']
-                    })
-                });
-
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.error?.message || errorData.error || `Error ${response.status}`);
+            // NEW: Rate limiting check
+            const canMakeRequest = useCallback(() => {
+                const now = Date.now();
+                if (now - lastRequestTime < REQUEST_COOLDOWN) {
+                    const waitTime = Math.ceil((REQUEST_COOLDOWN - (now - lastRequestTime)) / 1000);
+                    setError(`Please wait ${waitTime} seconds before refreshing`);
+                    return false;
                 }
+                return true;
+            }, [lastRequestTime]);
 
-                const data = await response.json();
-                
-                // Check for incomplete response
-                if (data.stop_reason === 'max_tokens') {
-                    throw new Error('Response too long - try refresh');
+            const callClaudeAPI = async (messages, maxTokens = 1024, retries = 2) => {
+                if (!canMakeRequest()) {
+                    throw new Error('Rate limited');
                 }
                 
-                return data;
+                setLastRequestTime(Date.now());
+                
+                for (let attempt = 0; attempt <= retries; attempt++) {
+                    try {
+                        const response = await fetch("/.netlify/functions/claude", {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                            },
+                            body: JSON.stringify({
+                                api_key: apiKey,
+                                max_tokens: maxTokens,
+                                messages: messages,
+                                tools: ['web_search']
+                            })
+                        });
+
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.error?.message || errorData.error || `Error ${response.status}`);
+                        }
+
+                        const data = await response.json();
+                        
+                        if (data.stop_reason === 'max_tokens') {
+                            throw new Error('Response too long - try refresh');
+                        }
+                        
+                        return data;
+                    } catch (err) {
+                        if (attempt === retries) throw err;
+                        // Exponential backoff
+                        await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
+                    }
+                }
             };
 
-            const getCurrentYear = () => {
-                return new Date().getFullYear();
-            };
-
-            const fetchGolfNews = async (type) => {
+            const fetchGolfNews = useCallback(async (type, forceRefresh = false) => {
+                // Check cache first
+                if (!forceRefresh && newsTimestamp && Date.now() - newsTimestamp < CACHE_DURATION) {
+                    return; // Use cached data
+                }
+                
                 setLoading(true);
                 setError('');
                 setSummary('');
@@ -129,10 +214,10 @@
                             role: "user",
                             content: `Search: ${query}
 
-3 items. Brief summaries.
+3 items. Brief.
 
 JSON:
-{"summary":"Brief","stories":[{"title":"","summary":"","source":""},{"title":"","summary":"","source":""},{"title":"","summary":"","source":""}]}`
+{"summary":"","stories":[{"title":"","summary":"","source":""},{"title":"","summary":"","source":""},{"title":"","summary":"","source":""}]}`
                         }
                     ], 800);
 
@@ -147,15 +232,29 @@ JSON:
                     const newsData = JSON.parse(cleanResponse);
                     setSummary(newsData.summary || '');
                     setNews(newsData.stories || []);
+                    
+                    // Cache the results
+                    const timestamp = Date.now();
+                    setNewsTimestamp(timestamp);
+                    localStorage.setItem('cached_news', JSON.stringify({
+                        stories: newsData.stories,
+                        summary: newsData.summary,
+                        type: type,
+                        timestamp: timestamp
+                    }));
                 } catch (err) {
                     console.error("Error:", err);
                     setError(`${err.message}`);
                 } finally {
                     setLoading(false);
                 }
-            };
+            }, [newsTimestamp, apiKey]);
 
-            const fetchBettingFavorites = async () => {
+            const fetchBettingFavorites = useCallback(async (forceRefresh = false) => {
+                if (!forceRefresh && bettingTimestamp && Date.now() - bettingTimestamp < CACHE_DURATION) {
+                    return;
+                }
+                
                 setBettingLoading(true);
                 setError('');
 
@@ -165,7 +264,7 @@ JSON:
                             role: "user",
                             content: `Search: oddschecker golf
 
-Top 5 favorites this week.
+Top 5 favorites.
 
 JSON:
 {"tournament":"","favorites":[{"rank":1,"player":"","odds":"","form":""},{"rank":2,"player":"","odds":"","form":""},{"rank":3,"player":"","odds":"","form":""},{"rank":4,"player":"","odds":"","form":""},{"rank":5,"player":"","odds":"","form":""}]}`
@@ -182,13 +281,20 @@ JSON:
                     
                     const bettingData = JSON.parse(cleanResponse);
                     setBettingFavorites(bettingData);
+                    
+                    const timestamp = Date.now();
+                    setBettingTimestamp(timestamp);
+                    localStorage.setItem('cached_betting', JSON.stringify({
+                        data: bettingData,
+                        timestamp: timestamp
+                    }));
                 } catch (err) {
                     console.error("Error:", err);
                     setError(`${err.message}`);
                 } finally {
                     setBettingLoading(false);
                 }
-            };
+            }, [bettingTimestamp, apiKey]);
 
             const shouldShowPredictions = () => {
                 const now = new Date();
@@ -196,9 +302,13 @@ JSON:
                 return dayOfWeek >= 3 || dayOfWeek === 0;
             };
 
-            const fetchPredictions = async (tour) => {
+            const fetchPredictions = useCallback(async (tour, forceRefresh = false) => {
                 if (!shouldShowPredictions()) {
                     setPredictions({ comeSoonMessage: true });
+                    return;
+                }
+                
+                if (!forceRefresh && predictionsTimestamp && Date.now() - predictionsTimestamp < CACHE_DURATION && selectedTour === tour) {
                     return;
                 }
 
@@ -214,9 +324,9 @@ JSON:
                             role: "user",
                             content: `${tourName} this week. Sources: ${tourSite}, weather.com, oddschecker
 
-Get tournament, field, weather, odds.
+Tournament, field, weather, odds.
 
-5 VALUE picks 20/1+. Weather + course fit.
+5 VALUE picks 20/1+.
 
 JSON:
 {"tournament":"","course":"","location":"","dates":"","weather":"","conditions":"","valuePicks":[{"rank":1,"player":"","odds":"","why":""},{"rank":2,"player":"","odds":"","why":""},{"rank":3,"player":"","odds":"","why":""},{"rank":4,"player":"","odds":"","why":""},{"rank":5,"player":"","odds":"","why":""}]}`
@@ -264,21 +374,29 @@ JSON:
                     }
                     
                     setPredictions(predictionsData);
+                    
+                    const timestamp = Date.now();
+                    setPredictionsTimestamp(timestamp);
+                    localStorage.setItem('cached_predictions', JSON.stringify({
+                        data: predictionsData,
+                        tour: tour,
+                        timestamp: timestamp
+                    }));
                 } catch (err) {
                     console.error("Error:", err);
                     setError(`${err.message}`);
                 } finally {
                     setPredictionsLoading(false);
                 }
-            };
+            }, [predictionsTimestamp, selectedTour, apiKey]);
 
             const handleRefresh = () => {
                 if (activeTab === 'news') {
-                    fetchGolfNews(newsType);
+                    fetchGolfNews(newsType, true); // Force refresh
                 } else if (activeTab === 'predictions') {
-                    fetchPredictions(selectedTour);
+                    fetchPredictions(selectedTour, true);
                 } else if (activeTab === 'betting') {
-                    fetchBettingFavorites();
+                    fetchBettingFavorites(true);
                 }
             };
 
@@ -292,6 +410,16 @@ JSON:
                 if (rank === 3) return 'bg-orange-300 text-orange-900';
                 return 'bg-blue-100 text-blue-800';
             };
+            
+            // Memoize cache status
+            const cacheStatus = useMemo(() => {
+                const now = Date.now();
+                return {
+                    news: newsTimestamp && (now - newsTimestamp < CACHE_DURATION),
+                    betting: bettingTimestamp && (now - bettingTimestamp < CACHE_DURATION),
+                    predictions: predictionsTimestamp && (now - predictionsTimestamp < CACHE_DURATION)
+                };
+            }, [newsTimestamp, bettingTimestamp, predictionsTimestamp]);
 
             return (
                 <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 p-3 sm:p-6">
@@ -317,9 +445,21 @@ JSON:
 
                             {apiKeyStored && (
                                 <div className="flex gap-2 border-b border-gray-200 overflow-x-auto">
-                                    <button onClick={() => setActiveTab('news')} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'news' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>📰 News</button>
-                                    <button onClick={() => { setActiveTab('betting'); if (!bettingFavorites) fetchBettingFavorites(); }} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'betting' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>💰 Betting</button>
-                                    <button onClick={() => { setActiveTab('predictions'); if (!predictions) fetchPredictions('pga'); }} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'predictions' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>🎯 Value</button>
+                                    <button onClick={() => setActiveTab('news')} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'news' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>
+                                        📰 News {cacheStatus.news && <span className="text-xs">●</span>}
+                                    </button>
+                                    <button onClick={() => { 
+                                        setActiveTab('betting'); 
+                                        if (!bettingFavorites || !cacheStatus.betting) fetchBettingFavorites(); 
+                                    }} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'betting' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>
+                                        💰 Betting {cacheStatus.betting && <span className="text-xs">●</span>}
+                                    </button>
+                                    <button onClick={() => { 
+                                        setActiveTab('predictions'); 
+                                        if (!predictions || !cacheStatus.predictions) fetchPredictions('pga'); 
+                                    }} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'predictions' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>
+                                        🎯 Value {cacheStatus.predictions && <span className="text-xs">●</span>}
+                                    </button>
                                 </div>
                             )}
                         </div>
@@ -327,7 +467,7 @@ JSON:
                         {error && (
                             <div className="bg-red-100 border border-red-400 text-red-700 px-3 py-2 rounded-lg mb-4 text-sm">
                                 {error}
-                                <button onClick={handleRefresh} className="ml-2 underline">Retry</button>
+                                {!error.includes('wait') && <button onClick={handleRefresh} className="ml-2 underline">Retry</button>}
                             </div>
                         )}
 
@@ -388,6 +528,9 @@ JSON:
                                     <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
                                         <h2 className="text-lg font-bold mb-2">📅 Latest</h2>
                                         <p className="text-sm text-gray-700">{summary}</p>
+                                        {cacheStatus.news && (
+                                            <p className="text-xs text-gray-500 mt-2">● Cached (refreshes every 5 min)</p>
+                                        )}
                                     </div>
                                 )}
 
@@ -414,7 +557,7 @@ JSON:
                             <>
                                 {!bettingFavorites && !bettingLoading && (
                                     <div className="bg-white rounded-lg shadow-lg p-6 text-center">
-                                        <button onClick={fetchBettingFavorites} className="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700">Load Favorites</button>
+                                        <button onClick={() => fetchBettingFavorites(true)} className="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700">Load Favorites</button>
                                     </div>
                                 )}
 
@@ -431,6 +574,9 @@ JSON:
                                             <h2 className="text-xl font-bold mb-2">💰 Betting Favorites</h2>
                                             {bettingFavorites.tournament && (
                                                 <p className="text-sm text-gray-600">Tournament: <strong>{bettingFavorites.tournament}</strong></p>
+                                            )}
+                                            {cacheStatus.betting && (
+                                                <p className="text-xs text-gray-500 mt-2">● Cached (refreshes every 5 min)</p>
                                             )}
                                         </div>
 
@@ -499,6 +645,10 @@ JSON:
                                             
                                             {predictions.courseAnalysis && predictions.courseAnalysis.conditions && (
                                                 <div className="mb-3"><p className="text-xs text-gray-600 mb-1">Conditions</p><p className="text-sm">{predictions.courseAnalysis.conditions}</p></div>
+                                            )}
+                                            
+                                            {cacheStatus.predictions && (
+                                                <p className="text-xs text-gray-500 mt-2">● Cached (refreshes every 5 min)</p>
                                             )}
                                         </div>
 
