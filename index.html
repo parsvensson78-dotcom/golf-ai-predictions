@@ -21,7 +21,6 @@
             const [apiKeyStored, setApiKeyStored] = useState(false);
             const [news, setNews] = useState([]);
             const [loading, setLoading] = useState(false);
-            const [summary, setSummary] = useState('');
             const [error, setError] = useState('');
             
             const [predictions, setPredictions] = useState(null);
@@ -64,7 +63,6 @@
                         const parsed = JSON.parse(newsCache);
                         if (now - parsed.timestamp < CACHE_DURATION) {
                             setNews(parsed.stories || []);
-                            setSummary(parsed.summary || '');
                             setTimestamps(prev => ({...prev, news: parsed.timestamp}));
                         }
                     }
@@ -159,6 +157,55 @@
                 return data;
             };
 
+            const fetchRSSFeed = async (url) => {
+                try {
+                    // Use CORS proxy to fetch RSS feeds
+                    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+                    const response = await fetch(proxyUrl);
+                    const text = await response.text();
+                    
+                    // Parse XML
+                    const parser = new DOMParser();
+                    const xml = parser.parseFromString(text, 'text/xml');
+                    
+                    // Check for parsing errors
+                    const parserError = xml.querySelector('parsererror');
+                    if (parserError) {
+                        throw new Error('XML parsing failed');
+                    }
+                    
+                    // Extract items (RSS 2.0 format)
+                    const items = xml.querySelectorAll('item');
+                    const stories = [];
+                    
+                    items.forEach((item, index) => {
+                        if (index < 3) { // Limit to 3 per feed
+                            const title = item.querySelector('title')?.textContent || '';
+                            const link = item.querySelector('link')?.textContent || '';
+                            const description = item.querySelector('description')?.textContent || '';
+                            const pubDate = item.querySelector('pubDate')?.textContent || '';
+                            
+                            // Clean HTML from description
+                            const tempDiv = document.createElement('div');
+                            tempDiv.innerHTML = description;
+                            const cleanDesc = tempDiv.textContent || tempDiv.innerText || '';
+                            
+                            stories.push({
+                                title: title.trim(),
+                                summary: cleanDesc.trim().substring(0, 200) + '...',
+                                url: link.trim(),
+                                date: pubDate
+                            });
+                        }
+                    });
+                    
+                    return stories;
+                } catch (err) {
+                    console.error(`RSS fetch error for ${url}:`, err);
+                    return [];
+                }
+            };
+
             const fetchGolfNews = async () => {
                 const cacheKey = 'news';
                 const now = Date.now();
@@ -171,48 +218,56 @@
                 
                 setLoading(true);
                 setError('');
-                setSummary('');
                 setNews([]);
 
                 try {
-                    const today = getToday();
+                    // RSS feed URLs
+                    const feeds = [
+                        { url: 'https://www.golf.com/feed/', source: 'Golf.com' },
+                        { url: 'https://www.golfchannel.com/feeds/news.rss', source: 'Golf Channel' },
+                        { url: 'https://www.espn.com/espn/rss/golf/news', source: 'ESPN Golf' }
+                    ];
 
-                    const data = await callAPI([{
-                        role: "user",
-                        content: `${today}
+                    // Fetch all feeds in parallel
+                    const feedPromises = feeds.map(async (feed) => {
+                        const stories = await fetchRSSFeed(feed.url);
+                        return stories.map(story => ({
+                            ...story,
+                            source: feed.source
+                        }));
+                    });
 
-ONLY search: golf.com golfchannel.com espn.com/golf
-
-5 stories January 2026
-
-PRIORITIZE: Upcoming PGA Tour and DP World Tour tournaments, previews, schedules, field announcements
-AVOID: Historical results, past tournament recaps
-
-JSON:
-{"summary":"","stories":[{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""}]}`
-                    }], 900);
-
-                    const text = data.content
-                        .filter(i => i.type === "text")
-                        .map(i => i.text)
-                        .join("");
+                    const results = await Promise.all(feedPromises);
                     
-                    const json = extractJSON(text);
+                    // Flatten and combine stories from all feeds
+                    let allStories = results.flat();
                     
-                    if (!json.stories || !Array.isArray(json.stories)) {
-                        throw new Error('Invalid response format');
+                    // Filter for forward-looking content (tournaments, previews, upcoming)
+                    const forwardKeywords = ['preview', 'upcoming', 'this week', 'schedule', 'field', 'next', 'returns', 'tee time'];
+                    const backwardKeywords = ['wins', 'won', 'final round', 'recap', 'results', 'leaderboard'];
+                    
+                    allStories = allStories.filter(story => {
+                        const text = (story.title + ' ' + story.summary).toLowerCase();
+                        const hasForward = forwardKeywords.some(kw => text.includes(kw));
+                        const hasBackward = backwardKeywords.some(kw => text.includes(kw));
+                        return hasForward || !hasBackward; // Prefer forward-looking, or neutral
+                    });
+                    
+                    // Take top 5 stories
+                    const topStories = allStories.slice(0, 5);
+                    
+                    if (topStories.length === 0) {
+                        throw new Error('No stories found in RSS feeds');
                     }
                     
-                    setSummary(json.summary || '');
-                    setNews(json.stories.slice(0, 5));
+                    setNews(topStories);
                     
                     const ts = Date.now();
                     setTimestamps(prev => ({...prev, [cacheKey]: ts}));
                     setLastRequestTime(prev => ({...prev, [cacheKey]: ts}));
                     
                     localStorage.setItem('cached_news', JSON.stringify({
-                        stories: json.stories.slice(0, 5),
-                        summary: json.summary,
+                        stories: topStories,
                         timestamp: ts
                     }));
                 } catch (err) {
@@ -372,7 +427,7 @@ JSON (no markdown):
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="text-6xl mb-4">📰</div>
                                         <h2 className="text-2xl font-bold text-gray-800 mb-3">Golf News</h2>
-                                        <p className="text-gray-600 mb-2">Upcoming tournaments & previews</p>
+                                        <p className="text-gray-600 mb-2">Latest from RSS feeds</p>
                                         <p className="text-xs text-gray-500 mb-6">Golf.com, Golf Channel & ESPN • 5 stories • 12hr cache</p>
                                         <button 
                                             onClick={fetchGolfNews}
@@ -385,7 +440,7 @@ JSON (no markdown):
                                 {loading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="text-sm text-gray-600 mt-4">Searching tournament news...</p>
+                                        <p className="text-sm text-gray-600 mt-4">Loading RSS feeds...</p>
                                     </div>
                                 )}
 
@@ -398,7 +453,7 @@ JSON (no markdown):
                                                     <span className="text-xs text-gray-500">Updated {getCacheAge('news')}</span>
                                                 )}
                                             </div>
-                                            <p className="text-sm text-gray-700 mb-3">{summary}</p>
+                                            <p className="text-sm text-gray-700 mb-3">From Golf.com, Golf Channel & ESPN RSS feeds</p>
                                             <button 
                                                 onClick={fetchGolfNews}
                                                 disabled={loading}
