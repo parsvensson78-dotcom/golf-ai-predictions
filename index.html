@@ -38,7 +38,7 @@
             const [newsTimestamp, setNewsTimestamp] = useState(0);
             const [bettingTimestamp, setBettingTimestamp] = useState(0);
             const [predictionsTimestamp, setPredictionsTimestamp] = useState(0);
-            const CACHE_DURATION = 10 * 60 * 1000; // 10 min cache
+            const CACHE_DURATION = 10 * 60 * 1000;
 
             useEffect(() => {
                 const stored = localStorage.getItem('anthropic_api_key');
@@ -168,7 +168,7 @@
                     const data = await callAPI([{
                         role: "user",
                         content: `${queries[type] || queries.general}. 3 brief items.
-JSON: {"summary":"","stories":[{"title":"","summary":"","source":""},{"title":"","summary":"","source":""},{"title":"","summary":"","source":""}]}`
+JSON: {"summary":"","stories":[{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""}]}`
                     }], 750);
 
                     const text = data.content.map(i => i.type === "text" ? i.text : "").join("\n");
@@ -386,13 +386,28 @@ JSON: {"tournament":"","course":"","location":"","dates":"","weather":"","condit
                                 {news.length > 0 && !loading && (
                                     <div className="space-y-3">
                                         {news.map((s, i) => (
-                                            <div key={i} className="bg-white rounded-lg shadow-lg p-4">
+                                            <div key={i} className="bg-white rounded-lg shadow-lg p-4 hover:shadow-xl transition-shadow">
                                                 <div className="flex gap-3">
-                                                    <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center text-white font-bold text-sm">{i + 1}</div>
+                                                    <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0">{i + 1}</div>
                                                     <div className="flex-1">
-                                                        <h3 className="text-base font-bold mb-2">{s.title}</h3>
+                                                        <h3 className="text-base font-bold mb-2">
+                                                            {s.url ? (
+                                                                <a href={s.url} target="_blank" rel="noopener noreferrer" className="text-green-700 hover:text-green-900 hover:underline">
+                                                                    {s.title} 🔗
+                                                                </a>
+                                                            ) : (
+                                                                s.title
+                                                            )}
+                                                        </h3>
                                                         <p className="text-sm text-gray-700 mb-2">{s.summary}</p>
-                                                        <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">{s.source}</span>
+                                                        <div className="flex items-center justify-between flex-wrap gap-2">
+                                                            <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">{s.source}</span>
+                                                            {s.url && (
+                                                                <a href={s.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:text-blue-800 font-semibold">
+                                                                    Read Full Article →
+                                                                </a>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </div>
