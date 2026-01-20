@@ -181,13 +181,16 @@
                         role: "user",
                         content: `${today}
 
-ONLY search: pgatour.com golfchannel.com espn.com/golf
+ONLY search: golf.com golfchannel.com espn.com/golf
 
-3 stories January 2026
+5 stories January 2026
+
+PRIORITIZE: Upcoming PGA Tour and DP World Tour tournaments, previews, schedules, field announcements
+AVOID: Historical results, past tournament recaps
 
 JSON:
-{"summary":"","stories":[{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""}]}`
-                    }], 750);
+{"summary":"","stories":[{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""}]}`
+                    }], 900);
 
                     const text = data.content
                         .filter(i => i.type === "text")
@@ -201,14 +204,14 @@ JSON:
                     }
                     
                     setSummary(json.summary || '');
-                    setNews(json.stories.slice(0, 3));
+                    setNews(json.stories.slice(0, 5));
                     
                     const ts = Date.now();
                     setTimestamps(prev => ({...prev, [cacheKey]: ts}));
                     setLastRequestTime(prev => ({...prev, [cacheKey]: ts}));
                     
                     localStorage.setItem('cached_news', JSON.stringify({
-                        stories: json.stories.slice(0, 3),
+                        stories: json.stories.slice(0, 5),
                         summary: json.summary,
                         timestamp: ts
                     }));
@@ -369,8 +372,8 @@ JSON (no markdown):
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="text-6xl mb-4">📰</div>
                                         <h2 className="text-2xl font-bold text-gray-800 mb-3">Golf News</h2>
-                                        <p className="text-gray-600 mb-2">Latest from PGA Tour, Golf Channel & ESPN</p>
-                                        <p className="text-xs text-gray-500 mb-6">3 stories • 12hr cache</p>
+                                        <p className="text-gray-600 mb-2">Upcoming tournaments & previews</p>
+                                        <p className="text-xs text-gray-500 mb-6">Golf.com, Golf Channel & ESPN • 5 stories • 12hr cache</p>
                                         <button 
                                             onClick={fetchGolfNews}
                                             className="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition-colors">
@@ -382,7 +385,7 @@ JSON (no markdown):
                                 {loading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="text-sm text-gray-600 mt-4">Searching official sources...</p>
+                                        <p className="text-sm text-gray-600 mt-4">Searching tournament news...</p>
                                     </div>
                                 )}
 
