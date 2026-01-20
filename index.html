@@ -33,12 +33,13 @@
             const [bettingLoading, setBettingLoading] = useState(false);
             
             const [lastRequestTime, setLastRequestTime] = useState(0);
-            const REQUEST_COOLDOWN = 2000;
+            const [rateLimitUntil, setRateLimitUntil] = useState(0);
+            const REQUEST_COOLDOWN = 3000; // 3 seconds between requests
             
             const [newsTimestamp, setNewsTimestamp] = useState(0);
             const [bettingTimestamp, setBettingTimestamp] = useState(0);
             const [predictionsTimestamp, setPredictionsTimestamp] = useState(0);
-            const CACHE_DURATION = 10 * 60 * 1000; // 10 min cache
+            const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
             useEffect(() => {
                 const stored = localStorage.getItem('anthropic_api_key');
@@ -104,6 +105,7 @@
                     setNews([]);
                     setBettingFavorites(null);
                     setPredictions(null);
+                    setRateLimitUntil(0);
                 }
             };
 
@@ -115,13 +117,23 @@
 
             const canMakeRequest = useCallback(() => {
                 const now = Date.now();
-                if (now - lastRequestTime < REQUEST_COOLDOWN) {
-                    const wait = Math.ceil((REQUEST_COOLDOWN - (now - lastRequestTime)) / 1000);
-                    setError(`Wait ${wait}s before refreshing`);
+                
+                // Check if we're rate limited
+                if (now < rateLimitUntil) {
+                    const waitSeconds = Math.ceil((rateLimitUntil - now) / 1000);
+                    setError(`Rate limited. Wait ${waitSeconds}s`);
                     return false;
                 }
+                
+                // Check cooldown
+                if (now - lastRequestTime < REQUEST_COOLDOWN) {
+                    const wait = Math.ceil((REQUEST_COOLDOWN - (now - lastRequestTime)) / 1000);
+                    setError(`Wait ${wait}s before next request`);
+                    return false;
+                }
+                
                 return true;
-            }, [lastRequestTime]);
+            }, [lastRequestTime, rateLimitUntil]);
 
             const callAPI = async (messages, maxTokens = 1024) => {
                 if (!canMakeRequest()) throw new Error('Rate limited');
@@ -140,6 +152,14 @@
 
                 if (!response.ok) {
                     const errorData = await response.json();
+                    
+                    // Handle 429 rate limit
+                    if (response.status === 429) {
+                        const retryAfter = 60; // Wait 60 seconds
+                        setRateLimitUntil(Date.now() + (retryAfter * 1000));
+                        throw new Error(`Rate limit hit. Wait ${retryAfter}s`);
+                    }
+                    
                     throw new Error(errorData.error?.message || `Error ${response.status}`);
                 }
 
@@ -190,7 +210,7 @@ JSON: {"summary":"","stories":[{"title":"","summary":"","source":""},{"title":""
                 } finally {
                     setLoading(false);
                 }
-            }, [newsTimestamp, apiKey]);
+            }, [newsTimestamp, apiKey, canMakeRequest]);
 
             const fetchBettingFavorites = useCallback(async (force = false) => {
                 if (!force && bettingTimestamp && Date.now() - bettingTimestamp < CACHE_DURATION) return;
@@ -219,7 +239,7 @@ JSON: {"tournament":"","favorites":[{"rank":1,"player":"","odds":"","form":""},{
                 } finally {
                     setBettingLoading(false);
                 }
-            }, [bettingTimestamp, apiKey]);
+            }, [bettingTimestamp, apiKey, canMakeRequest]);
 
             const shouldShowPredictions = () => {
                 const day = new Date().getDay();
@@ -283,7 +303,7 @@ JSON: {"tournament":"","course":"","location":"","dates":"","weather":"","condit
                 } finally {
                     setPredictionsLoading(false);
                 }
-            }, [predictionsTimestamp, selectedTour, apiKey]);
+            }, [predictionsTimestamp, selectedTour, apiKey, canMakeRequest]);
 
             const handleRefresh = () => {
                 if (activeTab === 'news') fetchGolfNews(newsType, true);
@@ -311,7 +331,7 @@ JSON: {"tournament":"","course":"","location":"","dates":"","weather":"","condit
                                 </div>
                                 {apiKeyStored && (
                                     <div className="flex gap-2">
-                                        <button onClick={handleRefresh} disabled={loading || predictionsLoading || bettingLoading} className="px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:bg-gray-400">
+                                        <button onClick={handleRefresh} disabled={loading || predictionsLoading || bettingLoading || Date.now() < rateLimitUntil} className="px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:bg-gray-400">
                                             {loading || predictionsLoading || bettingLoading ? "..." : "🔄"}
                                         </button>
                                         <button onClick={clearApiKey} className="px-3 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700">Clear</button>
@@ -336,7 +356,7 @@ JSON: {"tournament":"","course":"","location":"","dates":"","weather":"","condit
 
                         {error && (
                             <div className="bg-red-100 border border-red-400 text-red-700 px-3 py-2 rounded-lg mb-4 text-sm">
-                                {error} {!error.includes('Wait') && <button onClick={handleRefresh} className="ml-2 underline">Retry</button>}
+                                ⚠️ {error}
                             </div>
                         )}
 
