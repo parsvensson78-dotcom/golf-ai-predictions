@@ -151,46 +151,32 @@ JSON:
 
                 try {
                     const tourName = tour === 'pga' ? 'PGA Tour' : 'DP World Tour';
+                    const tourSite = tour === 'pga' ? 'pgatour.com' : 'dpworldtour.com';
                     
                     const data = await callClaudeAPI([
                         {
                             role: "user",
-                            content: `Search ${tourName} this week tournament.
+                            content: `${tourName} this week.
 
-CRITICAL ANALYSIS STEPS:
+SOURCES ONLY:
+- Field: ${tourSite}
+- Weather: weather.com
+- Odds: oddschecker.com
 
-1. WEATHER FORECAST (Thu-Sun):
-   - Wind: Speed/direction each day
-   - Rain: Timing and amounts
-   - Temperature: Cold/heat impacts
-   - Playing conditions: Soft/firm/wet
+Find tournament, field list, weather forecast, odds.
 
-2. COURSE SETUP:
-   - Type (links/parkland/desert)
-   - Length and par
-   - Green firmness expected
-   - Rough thickness
-   - Key hole challenges
+VALUE PICKS (20/1+ from oddschecker):
+- Match stats to weather + course
+- Recent top 20 finishes
+- Course history
+- Weather fit (windy/wet/cold/firm)
 
-3. WEATHER-ADJUSTED PLAYER SELECTION:
-   - If WINDY (15+ mph): Prioritize low-ball hitters, links experience
-   - If RAIN/WET: Prioritize long hitters, soft-condition specialists
-   - If COLD (<50°F): Prioritize experienced players, less distance
-   - If HOT/DRY: Prioritize distance, firm-condition players
+JSON:
+{"tournament":"Name","course":"Course","location":"City","dates":"Jan 23-26","weather":"Weather.com forecast summary","conditions":"Course setup","valuePicks":[{"rank":1,"player":"Name (IN FIELD)","odds":"25/1","why":"Weather + stats reason"},{"rank":2,"player":"Name","odds":"30/1","why":"Reason"},{"rank":3,"player":"Name","odds":"35/1","why":"Reason"},{"rank":4,"player":"Name","odds":"40/1","why":"Reason"},{"rank":5,"player":"Name","odds":"50/1","why":"Reason"}]}
 
-4. VALUE PICKS CRITERIA:
-   - Odds 20/1+ (no favorites)
-   - Stats match course + weather needs
-   - Recent form (top 20 last 3 weeks)
-   - Course history if available
-   - Weather-game specialists
-
-Return JSON ONLY:
-{"tournament":"Name","course":"Course","location":"City","dates":"Jan 23-26","weather":{"forecast":"Thu-Sun forecast summary","wind":"Average mph","impact":"How weather changes course"},"conditions":"Course setup + weather combined","valuePicks":[{"rank":1,"player":"Name","odds":"25/1+","why":"Weather-adjusted reason: X stat matches Y condition"},{"rank":2,"player":"Name","odds":"30/1+","why":"Stats + weather fit"},{"rank":3,"player":"Name","odds":"35/1+","why":"Reason"},{"rank":4,"player":"Name","odds":"40/1+","why":"Reason"},{"rank":5,"player":"Name","odds":"50/1+","why":"Dark horse"}]}
-
-FOCUS: Weather is CRITICAL. Match players to expected conditions. Higher odds = better.`
+Verify players in field on ${tourSite}. Higher odds better.`
                         }
-                    ], 1200);
+                    ], 950);
 
                     const fullResponse = data.content
                         .map(item => (item.type === "text" ? item.text : ""))
@@ -221,14 +207,11 @@ FOCUS: Weather is CRITICAL. Match players to expected conditions. Higher odds = 
                                 length: '7000+ yards',
                                 par: '72',
                                 conditions: predictionsData.conditions || 'Standard',
-                                keyFactors: ['Driving', 'Approach', 'Putting']
+                                keyFactors: ['Driving', 'Approach', 'Putting'],
+                                weather: predictionsData.weather || 'Standard conditions'
                             };
-                        }
-                        
-                        // Add weather to course analysis
-                        if (predictionsData.weather) {
-                            predictionsData.courseAnalysis.weather = predictionsData.weather.forecast;
-                            predictionsData.courseAnalysis.weatherImpact = predictionsData.weather.impact;
+                        } else if (predictionsData.weather) {
+                            predictionsData.courseAnalysis.weather = predictionsData.weather;
                         }
                     } catch (parseError) {
                         console.error('Parse failed:', parseError);
@@ -266,7 +249,7 @@ FOCUS: Weather is CRITICAL. Match players to expected conditions. Higher odds = 
             return (
                 <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 p-3 sm:p-6">
                     <div className="max-w-6xl mx-auto">
-                        <div className="bg-white rounded-lg shadow-lg p-4 sm:p-6 mb-4 sm:mb-6">
+                        <div className="bg-white rounded-lg shadow-lg p-4 sm:p-6 mb-4 sm:pb-6">
                             <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 sm:w-12 sm:h-12 bg-green-600 rounded-full flex items-center justify-center text-white text-xl sm:text-2xl">⛳</div>
@@ -386,7 +369,7 @@ FOCUS: Weather is CRITICAL. Match players to expected conditions. Higher odds = 
                                 {predictionsLoading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="mt-4 text-sm">Analyzing weather & course conditions...</p>
+                                        <p className="mt-4 text-sm">Checking sources...</p>
                                     </div>
                                 )}
 
@@ -394,10 +377,10 @@ FOCUS: Weather is CRITICAL. Match players to expected conditions. Higher odds = 
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="text-6xl mb-4">⛳</div>
                                         <h2 className="text-2xl font-bold text-gray-800 mb-3">Predictions Coming Soon</h2>
-                                        <p className="text-gray-600 mb-4">Value picks are updated every <strong>Wednesday</strong> for the week's tournament starting Thursday.</p>
-                                        <p className="text-gray-600">Check back on <strong>Wednesday</strong> for this week's weather-adjusted picks!</p>
+                                        <p className="text-gray-600 mb-4">Value picks updated every <strong>Wednesday</strong> for Thu-Sun tournaments.</p>
+                                        <p className="text-gray-600">Check back <strong>Wednesday</strong> for weather-adjusted picks!</p>
                                         <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-                                            <p className="text-sm text-blue-800"><strong>Schedule:</strong> Predictions available Wed-Sun each week</p>
+                                            <p className="text-sm text-blue-800"><strong>Schedule:</strong> Predictions Wed-Sun each week</p>
                                         </div>
                                     </div>
                                 )}
@@ -414,11 +397,8 @@ FOCUS: Weather is CRITICAL. Match players to expected conditions. Higher odds = 
                                             
                                             {predictions.courseAnalysis && predictions.courseAnalysis.weather && (
                                                 <div className="mb-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                                                    <p className="text-xs font-bold text-blue-800 mb-1">🌤️ Weather Forecast</p>
+                                                    <p className="text-xs font-bold text-blue-800 mb-1">🌤️ Weather (Weather.com)</p>
                                                     <p className="text-sm text-blue-900">{predictions.courseAnalysis.weather}</p>
-                                                    {predictions.courseAnalysis.weatherImpact && (
-                                                        <p className="text-xs text-blue-700 mt-2"><strong>Impact:</strong> {predictions.courseAnalysis.weatherImpact}</p>
-                                                    )}
                                                 </div>
                                             )}
                                             
@@ -430,13 +410,13 @@ FOCUS: Weather is CRITICAL. Match players to expected conditions. Higher odds = 
                                             )}
                                         </div>
 
-                                        <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-4 mb-4">
-                                            <h3 className="text-sm font-bold text-green-800 mb-2">💎 VALUE + WEATHER STRATEGY</h3>
-                                            <p className="text-xs text-green-700">Picks prioritize <strong>value odds (20/1+)</strong> matched with <strong>weather-adjusted course fit</strong>. Players selected based on how their game matches expected conditions.</p>
+                                        <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-lg p-3 mb-4">
+                                            <h3 className="text-xs font-bold text-green-800 mb-1">💎 SOURCES</h3>
+                                            <p className="text-xs text-green-700">Field: {selectedTour === 'pga' ? 'PGATour.com' : 'DPWorldTour.com'} • Weather: Weather.com • Odds: Oddschecker.com</p>
                                         </div>
 
                                         <div className="bg-white rounded-lg shadow-lg p-4">
-                                            <h2 className="text-lg font-bold mb-4">💰 Top 5 Weather-Adjusted Value Picks</h2>
+                                            <h2 className="text-lg font-bold mb-4">💰 Top 5 Value Picks</h2>
                                             <div className="space-y-3">
                                                 {predictions.topPicks && predictions.topPicks.map((pick, i) => (
                                                     <div key={i} className="border-l-4 border-green-600 bg-gradient-to-r from-gray-50 to-green-50 p-3 rounded-r-lg">
@@ -461,7 +441,7 @@ FOCUS: Weather is CRITICAL. Match players to expected conditions. Higher odds = 
 
                                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mt-4">
                                             <p className="text-xs text-yellow-800">
-                                                <strong>Strategy:</strong> Value plays adjusted for weather. Wind, rain, and temperature all impact player selection. Higher risk, higher reward.
+                                                <strong>Strategy:</strong> Weather-adjusted value (20/1+). Verified field only. Higher risk, higher reward.
                                             </p>
                                         </div>
                                     </>
