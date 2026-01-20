@@ -32,7 +32,7 @@
             const REQUEST_COOLDOWN = 3000;
             
             const [timestamps, setTimestamps] = useState({});
-            const CACHE_DURATION = 12 * 60 * 60 * 1000; // 12 hours
+            const CACHE_DURATION = 12 * 60 * 60 * 1000;
 
             const getToday = () => {
                 const now = new Date();
@@ -163,9 +163,8 @@
                 const cacheKey = 'news';
                 const now = Date.now();
                 
-                // Check cache first
                 if (timestamps[cacheKey] && now - timestamps[cacheKey] < CACHE_DURATION) {
-                    return; // Use cached data
+                    return;
                 }
                 
                 if (!canMakeRequest(cacheKey)) return;
@@ -180,13 +179,13 @@
 
                     const data = await callAPI([{
                         role: "user",
-                        content: `Today is ${today}.
+                        content: `${today}
 
-Search for general golf news from January 2026. Find 10 recent stories covering PGA Tour, DP World Tour, majors, and player news.
+Golf news January 2026. 5 stories covering tours, majors, players.
 
-Respond ONLY with this JSON format (no markdown, no code fences):
-{"summary":"brief overview of current golf landscape","stories":[{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""}]}`
-                    }], 1200);
+JSON (no markdown):
+{"summary":"","stories":[{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""}]}`
+                    }], 900);
 
                     const text = data.content
                         .filter(i => i.type === "text")
@@ -200,14 +199,14 @@ Respond ONLY with this JSON format (no markdown, no code fences):
                     }
                     
                     setSummary(json.summary || '');
-                    setNews(json.stories.slice(0, 10));
+                    setNews(json.stories.slice(0, 5));
                     
                     const ts = Date.now();
                     setTimestamps(prev => ({...prev, [cacheKey]: ts}));
                     setLastRequestTime(prev => ({...prev, [cacheKey]: ts}));
                     
                     localStorage.setItem('cached_news', JSON.stringify({
-                        stories: json.stories.slice(0, 10),
+                        stories: json.stories.slice(0, 5),
                         summary: json.summary,
                         timestamp: ts
                     }));
@@ -233,9 +232,8 @@ Respond ONLY with this JSON format (no markdown, no code fences):
                 const cacheKey = `pred_${tour}`;
                 const now = Date.now();
                 
-                // Check cache
                 if (timestamps[cacheKey] && now - timestamps[cacheKey] < CACHE_DURATION) {
-                    return; // Use cached data
+                    return;
                 }
                 
                 if (!canMakeRequest(cacheKey)) return;
@@ -253,15 +251,15 @@ Respond ONLY with this JSON format (no markdown, no code fences):
                     
                     const data = await callAPI([{
                         role: "user",
-                        content: `Today is ${today}.
+                        content: `${today}
 
-${tourName} tournament THIS WEEK (January 2026).
+${tourName} this week January 2026
 
-Sources: ${tourSite} ${statsSite} oddschecker weather.com
+${tourSite} ${statsSite} oddschecker weather.com
 
-Find 5 value picks with 20/1+ odds that match the course profile.
+5 value 20/1+ course fit
 
-Respond ONLY with this JSON format (no markdown, no code fences):
+JSON (no markdown):
 {"tournament":"","course":"","location":"","dates":"","courseProfile":{"length":"","par":"","keyFeatures":["",""],"favoredSkills":[""]},"weather":"","valuePicks":[{"rank":1,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":2,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":3,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":4,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":5,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}}]}`
                     }], 1800);
 
