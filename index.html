@@ -32,15 +32,13 @@
             const [bettingFavorites, setBettingFavorites] = useState(null);
             const [bettingLoading, setBettingLoading] = useState(false);
             
-            // NEW: Rate limiting
             const [lastRequestTime, setLastRequestTime] = useState(0);
-            const REQUEST_COOLDOWN = 3000; // 3 seconds between requests
+            const REQUEST_COOLDOWN = 2000;
             
-            // NEW: Cache timestamps
             const [newsTimestamp, setNewsTimestamp] = useState(0);
             const [bettingTimestamp, setBettingTimestamp] = useState(0);
             const [predictionsTimestamp, setPredictionsTimestamp] = useState(0);
-            const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+            const CACHE_DURATION = 10 * 60 * 1000; // 10 min cache
 
             useEffect(() => {
                 const stored = localStorage.getItem('anthropic_api_key');
@@ -49,49 +47,38 @@
                     setApiKeyStored(true);
                     setActiveTab('news');
                 }
-                
-                // NEW: Load cached data
                 loadCachedData();
-                
-                return () => {
-                    // Cleanup (best practice)
-                };
             }, []);
+
+            const getToday = () => new Date().toLocaleDateString('en-US', { 
+                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
+            });
 
             const loadCachedData = () => {
                 try {
-                    const cachedNews = localStorage.getItem('cached_news');
-                    const cachedBetting = localStorage.getItem('cached_betting');
-                    const cachedPredictions = localStorage.getItem('cached_predictions');
-                    
-                    if (cachedNews) {
-                        const parsed = JSON.parse(cachedNews);
-                        if (Date.now() - parsed.timestamp < CACHE_DURATION) {
-                            setNews(parsed.stories);
-                            setSummary(parsed.summary);
-                            setNewsType(parsed.type);
-                            setNewsTimestamp(parsed.timestamp);
+                    ['news', 'betting', 'predictions'].forEach(type => {
+                        const cached = localStorage.getItem(`cached_${type}`);
+                        if (cached) {
+                            const parsed = JSON.parse(cached);
+                            if (Date.now() - parsed.timestamp < CACHE_DURATION) {
+                                if (type === 'news') {
+                                    setNews(parsed.stories);
+                                    setSummary(parsed.summary);
+                                    setNewsType(parsed.type);
+                                    setNewsTimestamp(parsed.timestamp);
+                                } else if (type === 'betting') {
+                                    setBettingFavorites(parsed.data);
+                                    setBettingTimestamp(parsed.timestamp);
+                                } else {
+                                    setPredictions(parsed.data);
+                                    setSelectedTour(parsed.tour);
+                                    setPredictionsTimestamp(parsed.timestamp);
+                                }
+                            }
                         }
-                    }
-                    
-                    if (cachedBetting) {
-                        const parsed = JSON.parse(cachedBetting);
-                        if (Date.now() - parsed.timestamp < CACHE_DURATION) {
-                            setBettingFavorites(parsed.data);
-                            setBettingTimestamp(parsed.timestamp);
-                        }
-                    }
-                    
-                    if (cachedPredictions) {
-                        const parsed = JSON.parse(cachedPredictions);
-                        if (Date.now() - parsed.timestamp < CACHE_DURATION) {
-                            setPredictions(parsed.data);
-                            setSelectedTour(parsed.tour);
-                            setPredictionsTimestamp(parsed.timestamp);
-                        }
-                    }
+                    });
                 } catch (err) {
-                    console.error('Cache load error:', err);
+                    console.error('Cache error:', err);
                 }
             };
 
@@ -107,11 +94,10 @@
             };
 
             const clearApiKey = () => {
-                if (confirm('Clear your API key?')) {
-                    localStorage.removeItem('anthropic_api_key');
-                    localStorage.removeItem('cached_news');
-                    localStorage.removeItem('cached_betting');
-                    localStorage.removeItem('cached_predictions');
+                if (confirm('Clear API key and cache?')) {
+                    ['anthropic_api_key', 'cached_news', 'cached_betting', 'cached_predictions'].forEach(key => 
+                        localStorage.removeItem(key)
+                    );
                     setApiKey('');
                     setApiKeyStored(false);
                     setActiveTab('setup');
@@ -122,72 +108,48 @@
             };
 
             const extractJSON = (text) => {
-                const jsonStart = text.indexOf('{');
-                const jsonEnd = text.lastIndexOf('}');
-                if (jsonStart >= 0 && jsonEnd > jsonStart) {
-                    return text.substring(jsonStart, jsonEnd + 1);
-                }
-                return text;
+                const start = text.indexOf('{');
+                const end = text.lastIndexOf('}');
+                return (start >= 0 && end > start) ? text.substring(start, end + 1) : text;
             };
 
-            // NEW: Rate limiting check
             const canMakeRequest = useCallback(() => {
                 const now = Date.now();
                 if (now - lastRequestTime < REQUEST_COOLDOWN) {
-                    const waitTime = Math.ceil((REQUEST_COOLDOWN - (now - lastRequestTime)) / 1000);
-                    setError(`Please wait ${waitTime} seconds before refreshing`);
+                    const wait = Math.ceil((REQUEST_COOLDOWN - (now - lastRequestTime)) / 1000);
+                    setError(`Wait ${wait}s before refreshing`);
                     return false;
                 }
                 return true;
             }, [lastRequestTime]);
 
-            const callClaudeAPI = async (messages, maxTokens = 1024, retries = 2) => {
-                if (!canMakeRequest()) {
-                    throw new Error('Rate limited');
-                }
-                
+            const callAPI = async (messages, maxTokens = 1024) => {
+                if (!canMakeRequest()) throw new Error('Rate limited');
                 setLastRequestTime(Date.now());
                 
-                for (let attempt = 0; attempt <= retries; attempt++) {
-                    try {
-                        const response = await fetch("/.netlify/functions/claude", {
-                            method: "POST",
-                            headers: {
-                                "Content-Type": "application/json",
-                            },
-                            body: JSON.stringify({
-                                api_key: apiKey,
-                                max_tokens: maxTokens,
-                                messages: messages,
-                                tools: ['web_search']
-                            })
-                        });
+                const response = await fetch("/.netlify/functions/claude", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        api_key: apiKey,
+                        max_tokens: maxTokens,
+                        messages: messages,
+                        tools: ['web_search']
+                    })
+                });
 
-                        if (!response.ok) {
-                            const errorData = await response.json();
-                            throw new Error(errorData.error?.message || errorData.error || `Error ${response.status}`);
-                        }
-
-                        const data = await response.json();
-                        
-                        if (data.stop_reason === 'max_tokens') {
-                            throw new Error('Response too long - try refresh');
-                        }
-                        
-                        return data;
-                    } catch (err) {
-                        if (attempt === retries) throw err;
-                        // Exponential backoff
-                        await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
-                    }
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error?.message || `Error ${response.status}`);
                 }
+
+                const data = await response.json();
+                if (data.stop_reason === 'max_tokens') throw new Error('Response too long');
+                return data;
             };
 
-            const fetchGolfNews = useCallback(async (type, forceRefresh = false) => {
-                // Check cache first
-                if (!forceRefresh && newsTimestamp && Date.now() - newsTimestamp < CACHE_DURATION) {
-                    return; // Use cached data
-                }
+            const fetchGolfNews = useCallback(async (type, force = false) => {
+                if (!force && newsTimestamp && Date.now() - newsTimestamp < CACHE_DURATION) return;
                 
                 setLoading(true);
                 setError('');
@@ -195,122 +157,82 @@
                 setNews([]);
 
                 try {
-                    let query = '';
+                    const queries = {
+                        pga: 'PGA Tour this week',
+                        majors: 'golf majors upcoming',
+                        european: 'DP World Tour',
+                        players: 'golf players news',
+                        general: 'PGA Tour'
+                    };
+
+                    const data = await callAPI([{
+                        role: "user",
+                        content: `${queries[type] || queries.general}. 3 brief items.
+JSON: {"summary":"","stories":[{"title":"","summary":"","source":""},{"title":"","summary":"","source":""},{"title":"","summary":"","source":""}]}`
+                    }], 750);
+
+                    const text = data.content.map(i => i.type === "text" ? i.text : "").join("\n");
+                    const json = JSON.parse(extractJSON(text.replace(/```json|```/g, "").trim()));
                     
-                    if (type === 'pga') {
-                        query = `PGA Tour this week`;
-                    } else if (type === 'majors') {
-                        query = `golf majors upcoming`;
-                    } else if (type === 'european') {
-                        query = `DP World Tour this week`;
-                    } else if (type === 'players') {
-                        query = `golf players news`;
-                    } else {
-                        query = `PGA Tour schedule`;
-                    }
-
-                    const data = await callClaudeAPI([
-                        {
-                            role: "user",
-                            content: `Search: ${query}
-
-3 items. Brief.
-
-JSON:
-{"summary":"","stories":[{"title":"","summary":"","source":""},{"title":"","summary":"","source":""},{"title":"","summary":"","source":""}]}`
-                        }
-                    ], 800);
-
-                    const fullResponse = data.content
-                        .map(item => (item.type === "text" ? item.text : ""))
-                        .filter(Boolean)
-                        .join("\n");
-
-                    let cleanResponse = fullResponse.replace(/```json\n?|\n?```/g, "").trim();
-                    cleanResponse = extractJSON(cleanResponse);
+                    setSummary(json.summary || '');
+                    setNews(json.stories || []);
                     
-                    const newsData = JSON.parse(cleanResponse);
-                    setSummary(newsData.summary || '');
-                    setNews(newsData.stories || []);
-                    
-                    // Cache the results
-                    const timestamp = Date.now();
-                    setNewsTimestamp(timestamp);
+                    const ts = Date.now();
+                    setNewsTimestamp(ts);
                     localStorage.setItem('cached_news', JSON.stringify({
-                        stories: newsData.stories,
-                        summary: newsData.summary,
+                        stories: json.stories,
+                        summary: json.summary,
                         type: type,
-                        timestamp: timestamp
+                        timestamp: ts
                     }));
                 } catch (err) {
-                    console.error("Error:", err);
-                    setError(`${err.message}`);
+                    setError(err.message);
                 } finally {
                     setLoading(false);
                 }
             }, [newsTimestamp, apiKey]);
 
-            const fetchBettingFavorites = useCallback(async (forceRefresh = false) => {
-                if (!forceRefresh && bettingTimestamp && Date.now() - bettingTimestamp < CACHE_DURATION) {
-                    return;
-                }
+            const fetchBettingFavorites = useCallback(async (force = false) => {
+                if (!force && bettingTimestamp && Date.now() - bettingTimestamp < CACHE_DURATION) return;
                 
                 setBettingLoading(true);
                 setError('');
 
                 try {
-                    const data = await callClaudeAPI([
-                        {
-                            role: "user",
-                            content: `Search: oddschecker golf
+                    const data = await callAPI([{
+                        role: "user",
+                        content: `Today: ${getToday()}
+oddschecker PGA Tour this week. Top 5.
+JSON: {"tournament":"","favorites":[{"rank":1,"player":"","odds":"","form":""},{"rank":2,"player":"","odds":"","form":""},{"rank":3,"player":"","odds":"","form":""},{"rank":4,"player":"","odds":"","form":""},{"rank":5,"player":"","odds":"","form":""}]}`
+                    }], 850);
 
-Top 5 favorites.
-
-JSON:
-{"tournament":"","favorites":[{"rank":1,"player":"","odds":"","form":""},{"rank":2,"player":"","odds":"","form":""},{"rank":3,"player":"","odds":"","form":""},{"rank":4,"player":"","odds":"","form":""},{"rank":5,"player":"","odds":"","form":""}]}`
-                        }
-                    ], 900);
-
-                    const fullResponse = data.content
-                        .map(item => (item.type === "text" ? item.text : ""))
-                        .filter(Boolean)
-                        .join("\n");
-
-                    let cleanResponse = fullResponse.replace(/```json\n?|\n?```/g, "").trim();
-                    cleanResponse = extractJSON(cleanResponse);
+                    const text = data.content.map(i => i.type === "text" ? i.text : "").join("\n");
+                    const json = JSON.parse(extractJSON(text.replace(/```json|```/g, "").trim()));
                     
-                    const bettingData = JSON.parse(cleanResponse);
-                    setBettingFavorites(bettingData);
+                    setBettingFavorites(json);
                     
-                    const timestamp = Date.now();
-                    setBettingTimestamp(timestamp);
-                    localStorage.setItem('cached_betting', JSON.stringify({
-                        data: bettingData,
-                        timestamp: timestamp
-                    }));
+                    const ts = Date.now();
+                    setBettingTimestamp(ts);
+                    localStorage.setItem('cached_betting', JSON.stringify({ data: json, timestamp: ts }));
                 } catch (err) {
-                    console.error("Error:", err);
-                    setError(`${err.message}`);
+                    setError(err.message);
                 } finally {
                     setBettingLoading(false);
                 }
             }, [bettingTimestamp, apiKey]);
 
             const shouldShowPredictions = () => {
-                const now = new Date();
-                const dayOfWeek = now.getDay();
-                return dayOfWeek >= 3 || dayOfWeek === 0;
+                const day = new Date().getDay();
+                return day >= 3 || day === 0;
             };
 
-            const fetchPredictions = useCallback(async (tour, forceRefresh = false) => {
+            const fetchPredictions = useCallback(async (tour, force = false) => {
                 if (!shouldShowPredictions()) {
                     setPredictions({ comeSoonMessage: true });
                     return;
                 }
                 
-                if (!forceRefresh && predictionsTimestamp && Date.now() - predictionsTimestamp < CACHE_DURATION && selectedTour === tour) {
-                    return;
-                }
+                if (!force && predictionsTimestamp && Date.now() - predictionsTimestamp < CACHE_DURATION && selectedTour === tour) return;
 
                 setPredictionsLoading(true);
                 setError('');
@@ -319,112 +241,66 @@ JSON:
                     const tourName = tour === 'pga' ? 'PGA Tour' : 'DP World Tour';
                     const tourSite = tour === 'pga' ? 'pgatour.com' : 'dpworldtour.com';
                     
-                    const data = await callClaudeAPI([
-                        {
-                            role: "user",
-                            content: `${tourName} this week. Sources: ${tourSite}, weather.com, oddschecker
+                    const data = await callAPI([{
+                        role: "user",
+                        content: `Today: ${getToday()}
+${tourName} this week. ${tourSite}, weather.com, oddschecker
+5 VALUE 20/1+
+JSON: {"tournament":"","course":"","location":"","dates":"","weather":"","conditions":"","valuePicks":[{"rank":1,"player":"","odds":"","why":""},{"rank":2,"player":"","odds":"","why":""},{"rank":3,"player":"","odds":"","why":""},{"rank":4,"player":"","odds":"","why":""},{"rank":5,"player":"","odds":"","why":""}]}`
+                    }], 1000);
 
-Tournament, field, weather, odds.
-
-5 VALUE picks 20/1+.
-
-JSON:
-{"tournament":"","course":"","location":"","dates":"","weather":"","conditions":"","valuePicks":[{"rank":1,"player":"","odds":"","why":""},{"rank":2,"player":"","odds":"","why":""},{"rank":3,"player":"","odds":"","why":""},{"rank":4,"player":"","odds":"","why":""},{"rank":5,"player":"","odds":"","why":""}]}`
-                        }
-                    ], 1100);
-
-                    const fullResponse = data.content
-                        .map(item => (item.type === "text" ? item.text : ""))
-                        .filter(Boolean)
-                        .join("\n");
-
-                    let cleanResponse = fullResponse.replace(/```json\n?|\n?```/g, "").trim();
-                    cleanResponse = extractJSON(cleanResponse);
+                    const text = data.content.map(i => i.type === "text" ? i.text : "").join("\n");
+                    const json = JSON.parse(extractJSON(text.replace(/```json|```/g, "").trim()));
                     
-                    let predictionsData;
-                    try {
-                        predictionsData = JSON.parse(cleanResponse);
-                        
-                        if (predictionsData.valuePicks) {
-                            predictionsData.topPicks = predictionsData.valuePicks.map(pick => ({
-                                rank: pick.rank,
-                                player: pick.player,
-                                odds: pick.odds,
-                                reasoning: pick.why || pick.reasoning || 'Value play',
-                                keyStrengths: pick.strengths || ['Course fit', 'Weather'],
-                                confidence: pick.rank <= 2 ? 'high' : 'medium'
-                            }));
-                        }
-                        
-                        if (!predictionsData.courseAnalysis) {
-                            predictionsData.courseAnalysis = {
-                                type: 'Course',
-                                length: '7000+',
-                                par: '72',
-                                conditions: predictionsData.conditions || 'Standard',
-                                keyFactors: ['Driving', 'Approach', 'Putting'],
-                                weather: predictionsData.weather || 'Standard'
-                            };
-                        } else if (predictionsData.weather) {
-                            predictionsData.courseAnalysis.weather = predictionsData.weather;
-                        }
-                    } catch (parseError) {
-                        console.error('Parse failed:', parseError);
-                        throw new Error('Parse error - refresh');
+                    if (json.valuePicks) {
+                        json.topPicks = json.valuePicks.map(p => ({
+                            rank: p.rank,
+                            player: p.player,
+                            odds: p.odds,
+                            reasoning: p.why || 'Value',
+                            keyStrengths: ['Course fit', 'Weather'],
+                            confidence: p.rank <= 2 ? 'high' : 'medium'
+                        }));
                     }
                     
-                    setPredictions(predictionsData);
+                    if (!json.courseAnalysis) {
+                        json.courseAnalysis = {
+                            conditions: json.conditions || 'Standard',
+                            keyFactors: ['Driving', 'Approach', 'Putting'],
+                            weather: json.weather || 'Standard'
+                        };
+                    } else if (json.weather) {
+                        json.courseAnalysis.weather = json.weather;
+                    }
                     
-                    const timestamp = Date.now();
-                    setPredictionsTimestamp(timestamp);
-                    localStorage.setItem('cached_predictions', JSON.stringify({
-                        data: predictionsData,
-                        tour: tour,
-                        timestamp: timestamp
-                    }));
+                    setPredictions(json);
+                    
+                    const ts = Date.now();
+                    setPredictionsTimestamp(ts);
+                    localStorage.setItem('cached_predictions', JSON.stringify({ data: json, tour, timestamp: ts }));
                 } catch (err) {
-                    console.error("Error:", err);
-                    setError(`${err.message}`);
+                    setError(err.message);
                 } finally {
                     setPredictionsLoading(false);
                 }
             }, [predictionsTimestamp, selectedTour, apiKey]);
 
             const handleRefresh = () => {
-                if (activeTab === 'news') {
-                    fetchGolfNews(newsType, true); // Force refresh
-                } else if (activeTab === 'predictions') {
-                    fetchPredictions(selectedTour, true);
-                } else if (activeTab === 'betting') {
-                    fetchBettingFavorites(true);
-                }
+                if (activeTab === 'news') fetchGolfNews(newsType, true);
+                else if (activeTab === 'predictions') fetchPredictions(selectedTour, true);
+                else if (activeTab === 'betting') fetchBettingFavorites(true);
             };
 
-            const getConfidenceColor = (confidence) => {
-                return confidence === 'high' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800';
-            };
-
-            const getRankColor = (rank) => {
-                if (rank === 1) return 'bg-yellow-400 text-yellow-900';
-                if (rank === 2) return 'bg-gray-300 text-gray-800';
-                if (rank === 3) return 'bg-orange-300 text-orange-900';
-                return 'bg-blue-100 text-blue-800';
-            };
-            
-            // Memoize cache status
-            const cacheStatus = useMemo(() => {
-                const now = Date.now();
-                return {
-                    news: newsTimestamp && (now - newsTimestamp < CACHE_DURATION),
-                    betting: bettingTimestamp && (now - bettingTimestamp < CACHE_DURATION),
-                    predictions: predictionsTimestamp && (now - predictionsTimestamp < CACHE_DURATION)
-                };
-            }, [newsTimestamp, bettingTimestamp, predictionsTimestamp]);
+            const cacheStatus = useMemo(() => ({
+                news: newsTimestamp && (Date.now() - newsTimestamp < CACHE_DURATION),
+                betting: bettingTimestamp && (Date.now() - bettingTimestamp < CACHE_DURATION),
+                predictions: predictionsTimestamp && (Date.now() - predictionsTimestamp < CACHE_DURATION)
+            }), [newsTimestamp, bettingTimestamp, predictionsTimestamp]);
 
             return (
                 <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 p-3 sm:p-6">
                     <div className="max-w-6xl mx-auto">
-                        <div className="bg-white rounded-lg shadow-lg p-4 sm:p-6 mb-4 sm:mb-6">
+                        <div className="bg-white rounded-lg shadow-lg p-4 sm:p-6 mb-4">
                             <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 sm:w-12 sm:h-12 bg-green-600 rounded-full flex items-center justify-center text-white text-xl sm:text-2xl">⛳</div>
@@ -436,7 +312,7 @@ JSON:
                                 {apiKeyStored && (
                                     <div className="flex gap-2">
                                         <button onClick={handleRefresh} disabled={loading || predictionsLoading || bettingLoading} className="px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:bg-gray-400">
-                                            {(loading || predictionsLoading || bettingLoading) ? "..." : "🔄"}
+                                            {loading || predictionsLoading || bettingLoading ? "..." : "🔄"}
                                         </button>
                                         <button onClick={clearApiKey} className="px-3 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700">Clear</button>
                                     </div>
@@ -448,16 +324,10 @@ JSON:
                                     <button onClick={() => setActiveTab('news')} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'news' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>
                                         📰 News {cacheStatus.news && <span className="text-xs">●</span>}
                                     </button>
-                                    <button onClick={() => { 
-                                        setActiveTab('betting'); 
-                                        if (!bettingFavorites || !cacheStatus.betting) fetchBettingFavorites(); 
-                                    }} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'betting' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>
+                                    <button onClick={() => { setActiveTab('betting'); if (!bettingFavorites || !cacheStatus.betting) fetchBettingFavorites(); }} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'betting' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>
                                         💰 Betting {cacheStatus.betting && <span className="text-xs">●</span>}
                                     </button>
-                                    <button onClick={() => { 
-                                        setActiveTab('predictions'); 
-                                        if (!predictions || !cacheStatus.predictions) fetchPredictions('pga'); 
-                                    }} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'predictions' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>
+                                    <button onClick={() => { setActiveTab('predictions'); if (!predictions || !cacheStatus.predictions) fetchPredictions('pga'); }} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'predictions' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>
                                         🎯 Value {cacheStatus.predictions && <span className="text-xs">●</span>}
                                     </button>
                                 </div>
@@ -466,25 +336,23 @@ JSON:
 
                         {error && (
                             <div className="bg-red-100 border border-red-400 text-red-700 px-3 py-2 rounded-lg mb-4 text-sm">
-                                {error}
-                                {!error.includes('wait') && <button onClick={handleRefresh} className="ml-2 underline">Retry</button>}
+                                {error} {!error.includes('Wait') && <button onClick={handleRefresh} className="ml-2 underline">Retry</button>}
                             </div>
                         )}
 
                         {activeTab === 'setup' && (
                             <div className="bg-white rounded-lg shadow-lg p-4 sm:p-8">
-                                <h2 className="text-xl sm:text-2xl font-bold mb-4">🔑 API Key Setup</h2>
+                                <h2 className="text-xl sm:text-2xl font-bold mb-4">🔑 API Key</h2>
                                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                                    <p className="text-sm text-blue-800 mb-2"><strong>Get your API key:</strong></p>
+                                    <p className="text-sm text-blue-800 mb-2"><strong>Get key:</strong></p>
                                     <ol className="list-decimal list-inside space-y-1 text-sm text-blue-800">
-                                        <li>Visit <a href="https://console.anthropic.com/" target="_blank" className="underline">console.anthropic.com</a></li>
-                                        <li>Sign up or log in</li>
-                                        <li>Go to API Keys → Create Key</li>
-                                        <li>Copy and paste below</li>
+                                        <li><a href="https://console.anthropic.com/" target="_blank" className="underline">console.anthropic.com</a></li>
+                                        <li>API Keys → Create</li>
+                                        <li>Paste below</li>
                                     </ol>
                                 </div>
                                 <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-ant-..." className="w-full px-3 py-2 border rounded-lg mb-3 text-sm" />
-                                <button onClick={saveApiKey} className="w-full px-4 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700">Save & Continue</button>
+                                <button onClick={saveApiKey} className="w-full px-4 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700">Save</button>
                             </div>
                         )}
 
@@ -498,52 +366,33 @@ JSON:
                                             { id: 'majors', label: 'Majors' },
                                             { id: 'european', label: 'DP World' },
                                             { id: 'players', label: 'Players' }
-                                        ].map(type => (
-                                            <button
-                                                key={type.id}
-                                                onClick={() => { setNewsType(type.id); fetchGolfNews(type.id); }}
-                                                disabled={loading}
-                                                className={`px-3 py-2 rounded-lg text-sm ${newsType === type.id ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-                                            >
-                                                {type.label}
-                                            </button>
+                                        ].map(t => (
+                                            <button key={t.id} onClick={() => { setNewsType(t.id); fetchGolfNews(t.id); }} disabled={loading} className={`px-3 py-2 rounded-lg text-sm ${newsType === t.id ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700'}`}>{t.label}</button>
                                         ))}
                                     </div>
                                 </div>
 
-                                {!news.length && !loading && (
-                                    <div className="bg-white rounded-lg shadow-lg p-6 text-center">
-                                        <p className="text-sm text-gray-600">Select a category</p>
-                                    </div>
-                                )}
+                                {!news.length && !loading && <div className="bg-white rounded-lg shadow-lg p-6 text-center"><p className="text-sm text-gray-600">Select category</p></div>}
 
-                                {loading && (
-                                    <div className="bg-white rounded-lg shadow-lg p-8 text-center">
-                                        <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="mt-4 text-sm">Loading...</p>
-                                    </div>
-                                )}
+                                {loading && <div className="bg-white rounded-lg shadow-lg p-8 text-center"><div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div></div>}
 
                                 {summary && !loading && (
                                     <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
                                         <h2 className="text-lg font-bold mb-2">📅 Latest</h2>
                                         <p className="text-sm text-gray-700">{summary}</p>
-                                        {cacheStatus.news && (
-                                            <p className="text-xs text-gray-500 mt-2">● Cached (refreshes every 5 min)</p>
-                                        )}
                                     </div>
                                 )}
 
                                 {news.length > 0 && !loading && (
                                     <div className="space-y-3">
-                                        {news.map((story, i) => (
+                                        {news.map((s, i) => (
                                             <div key={i} className="bg-white rounded-lg shadow-lg p-4">
                                                 <div className="flex gap-3">
                                                     <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center text-white font-bold text-sm">{i + 1}</div>
                                                     <div className="flex-1">
-                                                        <h3 className="text-base font-bold mb-2">{story.title}</h3>
-                                                        <p className="text-sm text-gray-700 mb-2">{story.summary}</p>
-                                                        <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">{story.source}</span>
+                                                        <h3 className="text-base font-bold mb-2">{s.title}</h3>
+                                                        <p className="text-sm text-gray-700 mb-2">{s.summary}</p>
+                                                        <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">{s.source}</span>
                                                     </div>
                                                 </div>
                                             </div>
@@ -561,36 +410,26 @@ JSON:
                                     </div>
                                 )}
 
-                                {bettingLoading && (
-                                    <div className="bg-white rounded-lg shadow-lg p-8 text-center">
-                                        <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="mt-4 text-sm">Loading...</p>
-                                    </div>
-                                )}
+                                {bettingLoading && <div className="bg-white rounded-lg shadow-lg p-8 text-center"><div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div></div>}
 
                                 {bettingFavorites && !bettingLoading && (
                                     <>
                                         <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
-                                            <h2 className="text-xl font-bold mb-2">💰 Betting Favorites</h2>
-                                            {bettingFavorites.tournament && (
-                                                <p className="text-sm text-gray-600">Tournament: <strong>{bettingFavorites.tournament}</strong></p>
-                                            )}
-                                            {cacheStatus.betting && (
-                                                <p className="text-xs text-gray-500 mt-2">● Cached (refreshes every 5 min)</p>
-                                            )}
+                                            <h2 className="text-xl font-bold mb-2">💰 Favorites</h2>
+                                            {bettingFavorites.tournament && <p className="text-sm text-gray-600"><strong>{bettingFavorites.tournament}</strong></p>}
                                         </div>
 
                                         <div className="space-y-3">
-                                            {bettingFavorites.favorites && bettingFavorites.favorites.map((fav, i) => (
+                                            {bettingFavorites.favorites && bettingFavorites.favorites.map((f, i) => (
                                                 <div key={i} className="bg-white rounded-lg shadow-lg p-4">
                                                     <div className="flex gap-3">
-                                                        <div className={`w-12 h-12 ${getRankColor(fav.rank)} rounded-full flex items-center justify-center font-bold text-lg`}>{fav.rank}</div>
+                                                        <div className={`w-12 h-12 ${i === 0 ? 'bg-yellow-400 text-yellow-900' : i === 1 ? 'bg-gray-300 text-gray-800' : i === 2 ? 'bg-orange-300 text-orange-900' : 'bg-blue-100 text-blue-800'} rounded-full flex items-center justify-center font-bold text-lg`}>{f.rank}</div>
                                                         <div className="flex-1">
                                                             <div className="flex justify-between items-start mb-2 flex-wrap gap-2">
-                                                                <h3 className="text-lg font-bold">{fav.player}</h3>
-                                                                <span className="px-4 py-2 bg-purple-600 text-white rounded-full text-base font-bold">{fav.odds}</span>
+                                                                <h3 className="text-lg font-bold">{f.player}</h3>
+                                                                <span className="px-4 py-2 bg-purple-600 text-white rounded-full text-base font-bold">{f.odds}</span>
                                                             </div>
-                                                            {fav.form && <p className="text-sm text-gray-600">{fav.form}</p>}
+                                                            {f.form && <p className="text-sm text-gray-600">{f.form}</p>}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -605,24 +444,18 @@ JSON:
                             <>
                                 <div className="bg-white rounded-lg shadow-lg p-3 mb-4">
                                     <div className="flex gap-2">
-                                        <button onClick={() => { setSelectedTour('pga'); fetchPredictions('pga'); }} disabled={predictionsLoading} className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm ${selectedTour === 'pga' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>PGA Tour</button>
+                                        <button onClick={() => { setSelectedTour('pga'); fetchPredictions('pga'); }} disabled={predictionsLoading} className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm ${selectedTour === 'pga' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>PGA</button>
                                         <button onClick={() => { setSelectedTour('dp'); fetchPredictions('dp'); }} disabled={predictionsLoading} className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm ${selectedTour === 'dp' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>DP World</button>
                                     </div>
                                 </div>
 
-                                {predictionsLoading && (
-                                    <div className="bg-white rounded-lg shadow-lg p-8 text-center">
-                                        <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="mt-4 text-sm">Analyzing...</p>
-                                    </div>
-                                )}
+                                {predictionsLoading && <div className="bg-white rounded-lg shadow-lg p-8 text-center"><div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div></div>}
 
                                 {predictions && predictions.comeSoonMessage && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="text-6xl mb-4">⛳</div>
-                                        <h2 className="text-2xl font-bold text-gray-800 mb-3">Value Picks Coming Soon</h2>
-                                        <p className="text-gray-600 mb-4">Updated every <strong>Wednesday</strong></p>
-                                        <p className="text-gray-600">Check back <strong>Wednesday</strong>!</p>
+                                        <h2 className="text-2xl font-bold text-gray-800 mb-3">Coming Wednesday</h2>
+                                        <p className="text-gray-600">Value picks updated every <strong>Wednesday</strong></p>
                                     </div>
                                 )}
 
@@ -636,49 +469,36 @@ JSON:
                                                 <div><p className="text-xs text-gray-600">Dates</p><p className="font-semibold">{predictions.dates}</p></div>
                                             </div>
                                             
-                                            {predictions.courseAnalysis && predictions.courseAnalysis.weather && (
+                                            {predictions.courseAnalysis?.weather && (
                                                 <div className="mb-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
                                                     <p className="text-xs font-bold text-blue-800 mb-1">🌤️ Weather</p>
                                                     <p className="text-sm text-blue-900">{predictions.courseAnalysis.weather}</p>
                                                 </div>
                                             )}
                                             
-                                            {predictions.courseAnalysis && predictions.courseAnalysis.conditions && (
+                                            {predictions.courseAnalysis?.conditions && (
                                                 <div className="mb-3"><p className="text-xs text-gray-600 mb-1">Conditions</p><p className="text-sm">{predictions.courseAnalysis.conditions}</p></div>
-                                            )}
-                                            
-                                            {cacheStatus.predictions && (
-                                                <p className="text-xs text-gray-500 mt-2">● Cached (refreshes every 5 min)</p>
                                             )}
                                         </div>
 
                                         <div className="bg-white rounded-lg shadow-lg p-4">
-                                            <h2 className="text-lg font-bold mb-4">💰 Top 5 Value Picks</h2>
+                                            <h2 className="text-lg font-bold mb-4">💰 Value Picks</h2>
                                             <div className="space-y-3">
-                                                {predictions.topPicks && predictions.topPicks.map((pick, i) => (
+                                                {predictions.topPicks?.map((p, i) => (
                                                     <div key={i} className="border-l-4 border-green-600 bg-gradient-to-r from-gray-50 to-green-50 p-3 rounded-r-lg">
                                                         <div className="flex gap-3">
-                                                            <div className={`w-10 h-10 ${getRankColor(pick.rank)} rounded-full flex items-center justify-center font-bold`}>{pick.rank}</div>
+                                                            <div className={`w-10 h-10 ${i === 0 ? 'bg-yellow-400 text-yellow-900' : i === 1 ? 'bg-gray-300 text-gray-800' : i === 2 ? 'bg-orange-300 text-orange-900' : 'bg-blue-100 text-blue-800'} rounded-full flex items-center justify-center font-bold`}>{p.rank}</div>
                                                             <div className="flex-1">
                                                                 <div className="flex justify-between mb-2 flex-wrap gap-2">
-                                                                    <h3 className="text-base font-bold">{pick.player}</h3>
-                                                                    <div className="flex gap-2">
-                                                                        {pick.odds && <span className="px-3 py-1 bg-green-600 text-white rounded-full text-sm font-bold">{pick.odds}</span>}
-                                                                        {pick.confidence && <span className={`px-2 py-1 rounded-full text-xs ${getConfidenceColor(pick.confidence)}`}>{pick.confidence}</span>}
-                                                                    </div>
+                                                                    <h3 className="text-base font-bold">{p.player}</h3>
+                                                                    <span className="px-3 py-1 bg-green-600 text-white rounded-full text-sm font-bold">{p.odds}</span>
                                                                 </div>
-                                                                <p className="text-sm text-gray-700">{pick.reasoning}</p>
+                                                                <p className="text-sm text-gray-700">{p.reasoning}</p>
                                                             </div>
                                                         </div>
                                                     </div>
                                                 ))}
                                             </div>
-                                        </div>
-
-                                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mt-4">
-                                            <p className="text-xs text-yellow-800">
-                                                <strong>Strategy:</strong> Weather-adjusted value 20/1+. Higher risk, higher reward.
-                                            </p>
                                         </div>
                                     </>
                                 )}
