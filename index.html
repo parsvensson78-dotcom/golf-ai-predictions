@@ -99,14 +99,26 @@
                     const end = cleaned.lastIndexOf('}');
                     
                     if (start === -1 || end === -1 || start >= end) {
-                        throw new Error('No valid JSON found in response');
+                        console.error('JSON not found in response:', text);
+                        throw new Error('Invalid API response - no JSON found');
                     }
                     
                     const jsonStr = cleaned.substring(start, end + 1);
-                    return JSON.parse(jsonStr);
+                    const parsed = JSON.parse(jsonStr);
+                    
+                    // Validate structure
+                    if (!parsed.valuePicks || !Array.isArray(parsed.valuePicks)) {
+                        console.error('Invalid structure:', parsed);
+                        throw new Error('Invalid response structure - missing valuePicks');
+                    }
+                    
+                    return parsed;
                 } catch (e) {
-                    console.error('JSON extraction failed:', text);
-                    throw new Error('Failed to parse API response');
+                    console.error('JSON extraction failed:', e, text);
+                    if (e instanceof SyntaxError) {
+                        throw new Error('Malformed JSON in response');
+                    }
+                    throw e;
                 }
             };
 
@@ -121,7 +133,7 @@
                 return true;
             };
 
-            const callAPI = async (messages, maxTokens = 1024) => {
+            const callAPI = async (messages, maxTokens = 1024, retryCount = 0) => {
                 const response = await fetch("/.netlify/functions/claude", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -135,13 +147,30 @@
 
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({}));
-                    throw new Error(errorData.error?.message || `HTTP ${response.status}`);
+                    const errorMsg = errorData.error?.message || `HTTP ${response.status}`;
+                    
+                    // Retry once on network errors (but not auth errors)
+                    if (retryCount === 0 && response.status >= 500) {
+                        console.log('Server error, retrying...');
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        return callAPI(messages, maxTokens, 1);
+                    }
+                    
+                    throw new Error(errorMsg);
                 }
 
                 const data = await response.json();
-                if (data.stop_reason === 'max_tokens') {
-                    throw new Error('Response truncated - try again');
+                
+                // If truncated, retry with more tokens (once)
+                if (data.stop_reason === 'max_tokens' && retryCount === 0 && maxTokens < 2000) {
+                    console.log('Response truncated, retrying with more tokens...');
+                    return callAPI(messages, maxTokens + 500, 1);
                 }
+                
+                if (data.stop_reason === 'max_tokens') {
+                    throw new Error('Response too long - try again');
+                }
+                
                 return data;
             };
 
@@ -178,17 +207,15 @@
                     
                     const data = await callAPI([{
                         role: "user",
-                        content: `${today}
+                        content: `${today}. ${tourName} this week.
 
-${tourName} this week January 2026
+Sources: ${tourSite} ${statsSite} oddschecker weather.com
 
-${tourSite} ${statsSite} oddschecker weather.com
+5 value picks 20/1+ matching course.
 
-5 value 20/1+ course fit
-
-JSON (no markdown):
-{"tournament":"","course":"","location":"","dates":"","courseProfile":{"length":"","par":"","keyFeatures":["",""],"favoredSkills":[""]},"weather":"","valuePicks":[{"rank":1,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":2,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":3,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":4,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":5,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}}]}`
-                    }], 1800);
+JSON:
+{"tournament":"","course":"","location":"","dates":"","courseProfile":{"length":"","par":"","keyFeatures":[""],"favoredSkills":[""]},"weather":"","valuePicks":[{"rank":1,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}}]}`
+                    }], 1500); // Reduced from 1800
 
                     const text = data.content
                         .filter(i => i.type === "text")
@@ -196,11 +223,6 @@ JSON (no markdown):
                         .join("");
                     
                     const json = extractJSON(text);
-                    
-                    if (!json.valuePicks || !Array.isArray(json.valuePicks)) {
-                        throw new Error('Invalid predictions format');
-                    }
-                    
                     json.topPicks = json.valuePicks;
                     setPredictions(json);
                     
@@ -385,74 +407,3 @@ JSON (no markdown):
                                                     <p className="text-sm text-blue-900">{predictions.weather}</p>
                                                 </div>
                                             )}
-
-                                            <button 
-                                                onClick={() => fetchPredictions(selectedTour)}
-                                                disabled={predictionsLoading}
-                                                className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors">
-                                                Refresh Predictions
-                                            </button>
-                                        </div>
-
-                                        <div className="bg-white rounded-lg shadow-lg p-4">
-                                            <h2 className="text-lg font-bold mb-4">💰 Value Picks (20/1+ Odds)</h2>
-                                            <div className="space-y-3">
-                                                {predictions.topPicks?.map((p, i) => (
-                                                    <div key={i} className="border-l-4 border-green-600 bg-gradient-to-r from-gray-50 to-green-50 p-3 rounded-r-lg hover:shadow-md transition-shadow">
-                                                        <div className="flex gap-3">
-                                                            <div className={`w-10 h-10 flex-shrink-0 ${i === 0 ? 'bg-yellow-400 text-yellow-900' : i === 1 ? 'bg-gray-300 text-gray-800' : i === 2 ? 'bg-orange-300 text-orange-900' : 'bg-blue-100 text-blue-800'} rounded-full flex items-center justify-center font-bold`}>
-                                                                {p.rank}
-                                                            </div>
-                                                            <div className="flex-1">
-                                                                <div className="flex justify-between mb-2 flex-wrap gap-2">
-                                                                    <h3 className="text-base font-bold">{p.player}</h3>
-                                                                    <span className="px-3 py-1 bg-green-600 text-white rounded-full text-sm font-bold">{p.odds}</span>
-                                                                </div>
-                                                                
-                                                                {p.coursefit && (
-                                                                    <div className="mb-2 p-2 bg-blue-50 rounded border border-blue-200">
-                                                                        <p className="text-xs font-bold text-blue-800">Course Fit:</p>
-                                                                        <p className="text-sm text-blue-900">{p.coursefit}</p>
-                                                                    </div>
-                                                                )}
-                                                                
-                                                                {p.stats && (
-                                                                    <div className="mb-2 grid grid-cols-2 gap-2 text-xs">
-                                                                        <StatBox label="Driving Acc" value={p.stats.drivingAcc} />
-                                                                        <StatBox label="GIR %" value={p.stats.gir} />
-                                                                        <StatBox label="SG: Approach" value={p.stats.sgApproach} />
-                                                                        <StatBox label="SG: Putting" value={p.stats.sgPutting} />
-                                                                    </div>
-                                                                )}
-                                                                
-                                                                {p.stats?.recentForm && (
-                                                                    <div className="mb-2 p-2 bg-purple-50 rounded border border-purple-200">
-                                                                        <p className="text-xs font-bold text-purple-800">Recent Form:</p>
-                                                                        <p className="text-sm text-purple-900">{p.stats.recentForm}</p>
-                                                                    </div>
-                                                                )}
-                                                                
-                                                                <p className="text-sm text-gray-700">{p.why}</p>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    </>
-                                )}
-                            </>
-                        )}
-
-                        <div className="mt-6 text-center text-xs text-gray-600">
-                            <p>Powered by Claude AI • 12hr cache • Data: DataGolf, {selectedTour === 'pga' ? 'PGA Tour' : 'European Tour'}, OddsChecker</p>
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-
-        ReactDOM.render(<GolfAI />, document.getElementById('root'));
-    </script>
-</body>
-</html>
