@@ -13,7 +13,7 @@
     <div id="root"></div>
     
     <script type="text/babel">
-        const { useState, useEffect, useCallback, useMemo } = React;
+        const { useState, useEffect } = React;
 
         function GolfNewsAgent() {
             const [activeTab, setActiveTab] = useState('setup');
@@ -33,7 +33,7 @@
             const REQUEST_COOLDOWN = 3000;
             
             const [timestamps, setTimestamps] = useState({});
-            const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
+            const CACHE_DURATION = 15 * 60 * 1000;
 
             useEffect(() => {
                 const stored = localStorage.getItem('anthropic_api_key');
@@ -98,8 +98,24 @@
             };
 
             const extractJSON = (text) => {
-                const jsonMatch = text.match(/\{[\s\S]*\}/);
-                return jsonMatch ? jsonMatch[0] : text;
+                try {
+                    // Remove markdown code fences
+                    let cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+                    
+                    // Find JSON object
+                    const start = cleaned.indexOf('{');
+                    const end = cleaned.lastIndexOf('}');
+                    
+                    if (start === -1 || end === -1 || start >= end) {
+                        throw new Error('No valid JSON found in response');
+                    }
+                    
+                    const jsonStr = cleaned.substring(start, end + 1);
+                    return JSON.parse(jsonStr);
+                } catch (e) {
+                    console.error('JSON extraction failed:', text);
+                    throw new Error('Failed to parse API response');
+                }
             };
 
             const canMakeRequest = (key) => {
@@ -131,7 +147,9 @@
                 }
 
                 const data = await response.json();
-                if (data.stop_reason === 'max_tokens') throw new Error('Response truncated');
+                if (data.stop_reason === 'max_tokens') {
+                    throw new Error('Response truncated - try again');
+                }
                 return data;
             };
 
@@ -139,16 +157,16 @@
                 const cacheKey = `news_${type}`;
                 const now = Date.now();
                 
-                // Check cache first
                 if (timestamps[cacheKey] && now - timestamps[cacheKey] < CACHE_DURATION) {
-                    return; // Use cached data
+                    return;
                 }
                 
-                // Check rate limit
                 if (!canMakeRequest(cacheKey)) return;
                 
                 setLoading(true);
                 setError('');
+                setSummary('');
+                setNews([]);
 
                 try {
                     const queries = {
@@ -161,28 +179,39 @@
 
                     const data = await callAPI([{
                         role: "user",
-                        content: `${queries[type]}. 3 items.
-{"summary":"","stories":[{"title":"","summary":"","source":"","url":""}]}`
-                    }], 700);
+                        content: `${queries[type]}. 3 brief stories with links.
 
-                    const text = data.content.map(i => i.type === "text" ? i.text : "").join("");
-                    const json = JSON.parse(extractJSON(text.replace(/```json|```/g, "")));
+Respond ONLY with this JSON format (no markdown, no code fences):
+{"summary":"brief overview","stories":[{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""}]}`
+                    }], 800);
+
+                    const text = data.content
+                        .filter(i => i.type === "text")
+                        .map(i => i.text)
+                        .join("");
+                    
+                    const json = extractJSON(text);
+                    
+                    if (!json.stories || !Array.isArray(json.stories)) {
+                        throw new Error('Invalid response format');
+                    }
                     
                     setSummary(json.summary || '');
-                    setNews(json.stories || []);
+                    setNews(json.stories.slice(0, 3)); // Ensure max 3 stories
                     
                     const ts = Date.now();
                     setTimestamps(prev => ({...prev, [cacheKey]: ts}));
                     setLastRequestTime(prev => ({...prev, [cacheKey]: ts}));
                     
                     localStorage.setItem('cached_news', JSON.stringify({
-                        stories: json.stories,
+                        stories: json.stories.slice(0, 3),
                         summary: json.summary,
                         type: type,
                         timestamp: ts
                     }));
                 } catch (err) {
-                    setError(err.message);
+                    console.error('News fetch error:', err);
+                    setError(err.message || 'Failed to load news');
                 } finally {
                     setLoading(false);
                 }
@@ -202,16 +231,15 @@
                 const cacheKey = `pred_${tour}`;
                 const now = Date.now();
                 
-                // Check cache
                 if (timestamps[cacheKey] && now - timestamps[cacheKey] < CACHE_DURATION) {
                     return;
                 }
                 
-                // Check rate limit
                 if (!canMakeRequest(cacheKey)) return;
 
                 setPredictionsLoading(true);
                 setError('');
+                setPredictions(null);
 
                 try {
                     const tourName = tour === 'pga' ? 'PGA Tour' : 'DP World Tour';
@@ -220,20 +248,26 @@
                     
                     const data = await callAPI([{
                         role: "user",
-                        content: `${tourName} this week. Sources: ${tourSite} ${statsSite} oddschecker
+                        content: `${tourName} this week. Sources: ${tourSite} ${statsSite} oddschecker weather.com
 
-5 value picks 20/1+
+5 value picks 20/1+ odds matching course profile.
 
-{"tournament":"","course":"","location":"","dates":"","courseProfile":{"length":"","par":"","keyFeatures":[""],"favoredSkills":[""]},"weather":"","valuePicks":[{"rank":1,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}}]}`
-                    }], 1600);
+Respond ONLY with this JSON format (no markdown, no code fences):
+{"tournament":"","course":"","location":"","dates":"","courseProfile":{"length":"","par":"","keyFeatures":["",""],"favoredSkills":[""]},"weather":"","valuePicks":[{"rank":1,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":2,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":3,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":4,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":5,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}}]}`
+                    }], 1800);
 
-                    const text = data.content.map(i => i.type === "text" ? i.text : "").join("");
-                    const json = JSON.parse(extractJSON(text.replace(/```json|```/g, "")));
+                    const text = data.content
+                        .filter(i => i.type === "text")
+                        .map(i => i.text)
+                        .join("");
                     
-                    if (json.valuePicks) {
-                        json.topPicks = json.valuePicks;
+                    const json = extractJSON(text);
+                    
+                    if (!json.valuePicks || !Array.isArray(json.valuePicks)) {
+                        throw new Error('Invalid predictions format');
                     }
                     
+                    json.topPicks = json.valuePicks;
                     setPredictions(json);
                     
                     const ts = Date.now();
@@ -246,7 +280,8 @@
                         timestamp: ts 
                     }));
                 } catch (err) {
-                    setError(err.message);
+                    console.error('Predictions fetch error:', err);
+                    setError(err.message || 'Failed to load predictions');
                 } finally {
                     setPredictionsLoading(false);
                 }
@@ -338,6 +373,7 @@
                                 {loading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
+                                        <p className="text-sm text-gray-600 mt-4">Loading news...</p>
                                     </div>
                                 )}
 
@@ -414,6 +450,7 @@
                                 {predictionsLoading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
+                                        <p className="text-sm text-gray-600 mt-4">Analyzing course & players...</p>
                                     </div>
                                 )}
 
