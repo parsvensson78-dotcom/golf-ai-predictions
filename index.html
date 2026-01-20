@@ -13,7 +13,7 @@
     <div id="root"></div>
     
     <script type="text/babel">
-        const { useState, useEffect, useCallback, useMemo } = React;
+        const { useState, useEffect } = React;
 
         function GolfNewsAgent() {
             const [activeTab, setActiveTab] = useState('setup');
@@ -29,17 +29,21 @@
             const [predictionsLoading, setPredictionsLoading] = useState(false);
             const [selectedTour, setSelectedTour] = useState('pga');
             
-            const [bettingFavorites, setBettingFavorites] = useState(null);
-            const [bettingLoading, setBettingLoading] = useState(false);
+            const [lastRequestTime, setLastRequestTime] = useState({});
+            const REQUEST_COOLDOWN = 3000;
             
-            const [lastRequestTime, setLastRequestTime] = useState(0);
-            const [rateLimitUntil, setRateLimitUntil] = useState(0);
-            const REQUEST_COOLDOWN = 3000; // 3 seconds between requests
-            
-            const [newsTimestamp, setNewsTimestamp] = useState(0);
-            const [bettingTimestamp, setBettingTimestamp] = useState(0);
-            const [predictionsTimestamp, setPredictionsTimestamp] = useState(0);
-            const CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
+            const [timestamps, setTimestamps] = useState({});
+            const CACHE_DURATION = 15 * 60 * 1000;
+
+            const getToday = () => {
+                const now = new Date();
+                return now.toLocaleDateString('en-US', { 
+                    weekday: 'long', 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric' 
+                });
+            };
 
             useEffect(() => {
                 const stored = localStorage.getItem('anthropic_api_key');
@@ -51,35 +55,32 @@
                 loadCachedData();
             }, []);
 
-            const getToday = () => new Date().toLocaleDateString('en-US', { 
-                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
-            });
-
             const loadCachedData = () => {
                 try {
-                    ['news', 'betting', 'predictions'].forEach(type => {
-                        const cached = localStorage.getItem(`cached_${type}`);
-                        if (cached) {
-                            const parsed = JSON.parse(cached);
-                            if (Date.now() - parsed.timestamp < CACHE_DURATION) {
-                                if (type === 'news') {
-                                    setNews(parsed.stories);
-                                    setSummary(parsed.summary);
-                                    setNewsType(parsed.type);
-                                    setNewsTimestamp(parsed.timestamp);
-                                } else if (type === 'betting') {
-                                    setBettingFavorites(parsed.data);
-                                    setBettingTimestamp(parsed.timestamp);
-                                } else {
-                                    setPredictions(parsed.data);
-                                    setSelectedTour(parsed.tour);
-                                    setPredictionsTimestamp(parsed.timestamp);
-                                }
-                            }
+                    const newsCache = localStorage.getItem('cached_news');
+                    const predCache = localStorage.getItem('cached_predictions');
+                    const now = Date.now();
+                    
+                    if (newsCache) {
+                        const parsed = JSON.parse(newsCache);
+                        if (now - parsed.timestamp < CACHE_DURATION) {
+                            setNews(parsed.stories || []);
+                            setSummary(parsed.summary || '');
+                            setNewsType(parsed.type || 'general');
+                            setTimestamps(prev => ({...prev, [`news_${parsed.type}`]: parsed.timestamp}));
                         }
-                    });
+                    }
+                    
+                    if (predCache) {
+                        const parsed = JSON.parse(predCache);
+                        if (now - parsed.timestamp < CACHE_DURATION) {
+                            setPredictions(parsed.data);
+                            setSelectedTour(parsed.tour || 'pga');
+                            setTimestamps(prev => ({...prev, [`pred_${parsed.tour}`]: parsed.timestamp}));
+                        }
+                    }
                 } catch (err) {
-                    console.error('Cache error:', err);
+                    console.error('Cache load error:', err);
                 }
             };
 
@@ -96,49 +97,49 @@
 
             const clearApiKey = () => {
                 if (confirm('Clear API key and cache?')) {
-                    ['anthropic_api_key', 'cached_news', 'cached_betting', 'cached_predictions'].forEach(key => 
-                        localStorage.removeItem(key)
-                    );
+                    localStorage.clear();
                     setApiKey('');
                     setApiKeyStored(false);
                     setActiveTab('setup');
                     setNews([]);
-                    setBettingFavorites(null);
                     setPredictions(null);
-                    setRateLimitUntil(0);
+                    setTimestamps({});
                 }
             };
 
             const extractJSON = (text) => {
-                const start = text.indexOf('{');
-                const end = text.lastIndexOf('}');
-                return (start >= 0 && end > start) ? text.substring(start, end + 1) : text;
+                try {
+                    // Remove markdown code fences
+                    let cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+                    
+                    // Find JSON object
+                    const start = cleaned.indexOf('{');
+                    const end = cleaned.lastIndexOf('}');
+                    
+                    if (start === -1 || end === -1 || start >= end) {
+                        throw new Error('No valid JSON found in response');
+                    }
+                    
+                    const jsonStr = cleaned.substring(start, end + 1);
+                    return JSON.parse(jsonStr);
+                } catch (e) {
+                    console.error('JSON extraction failed:', text);
+                    throw new Error('Failed to parse API response');
+                }
             };
 
-            const canMakeRequest = useCallback(() => {
+            const canMakeRequest = (key) => {
                 const now = Date.now();
-                
-                // Check if we're rate limited
-                if (now < rateLimitUntil) {
-                    const waitSeconds = Math.ceil((rateLimitUntil - now) / 1000);
-                    setError(`Rate limited. Wait ${waitSeconds}s`);
-                    return false;
-                }
-                
-                // Check cooldown
-                if (now - lastRequestTime < REQUEST_COOLDOWN) {
-                    const wait = Math.ceil((REQUEST_COOLDOWN - (now - lastRequestTime)) / 1000);
+                const last = lastRequestTime[key] || 0;
+                if (now - last < REQUEST_COOLDOWN) {
+                    const wait = Math.ceil((REQUEST_COOLDOWN - (now - last)) / 1000);
                     setError(`Wait ${wait}s before next request`);
                     return false;
                 }
-                
                 return true;
-            }, [lastRequestTime, rateLimitUntil]);
+            };
 
             const callAPI = async (messages, maxTokens = 1024) => {
-                if (!canMakeRequest()) throw new Error('Rate limited');
-                setLastRequestTime(Date.now());
-                
                 const response = await fetch("/.netlify/functions/claude", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -151,25 +152,26 @@
                 });
 
                 if (!response.ok) {
-                    const errorData = await response.json();
-                    
-                    // Handle 429 rate limit
-                    if (response.status === 429) {
-                        const retryAfter = 60; // Wait 60 seconds
-                        setRateLimitUntil(Date.now() + (retryAfter * 1000));
-                        throw new Error(`Rate limit hit. Wait ${retryAfter}s`);
-                    }
-                    
-                    throw new Error(errorData.error?.message || `Error ${response.status}`);
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error?.message || `HTTP ${response.status}`);
                 }
 
                 const data = await response.json();
-                if (data.stop_reason === 'max_tokens') throw new Error('Response too long');
+                if (data.stop_reason === 'max_tokens') {
+                    throw new Error('Response truncated - try again');
+                }
                 return data;
             };
 
-            const fetchGolfNews = useCallback(async (type, force = false) => {
-                if (!force && newsTimestamp && Date.now() - newsTimestamp < CACHE_DURATION) return;
+            const fetchGolfNews = async (type) => {
+                const cacheKey = `news_${type}`;
+                const now = Date.now();
+                
+                if (timestamps[cacheKey] && now - timestamps[cacheKey] < CACHE_DURATION) {
+                    return;
+                }
+                
+                if (!canMakeRequest(cacheKey)) return;
                 
                 setLoading(true);
                 setError('');
@@ -180,142 +182,139 @@
                     const queries = {
                         pga: 'PGA Tour this week',
                         majors: 'golf majors upcoming',
-                        european: 'DP World Tour',
+                        european: 'DP World Tour this week',
                         players: 'golf players news',
-                        general: 'PGA Tour'
+                        general: 'golf news today'
                     };
+
+                    const today = getToday();
 
                     const data = await callAPI([{
                         role: "user",
-                        content: `${queries[type] || queries.general}. 3 brief items.
-JSON: {"summary":"","stories":[{"title":"","summary":"","source":""},{"title":"","summary":"","source":""},{"title":"","summary":"","source":""}]}`
-                    }], 750);
+                        content: `Today is ${today}.
 
-                    const text = data.content.map(i => i.type === "text" ? i.text : "").join("\n");
-                    const json = JSON.parse(extractJSON(text.replace(/```json|```/g, "").trim()));
+Search for: ${queries[type]}
+
+Find 3 RECENT stories from January 2026. Must be current news.
+
+Respond ONLY with this JSON format (no markdown, no code fences):
+{"summary":"brief overview","stories":[{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""},{"title":"","summary":"","source":"","url":""}]}`
+                    }], 800);
+
+                    const text = data.content
+                        .filter(i => i.type === "text")
+                        .map(i => i.text)
+                        .join("");
+                    
+                    const json = extractJSON(text);
+                    
+                    if (!json.stories || !Array.isArray(json.stories)) {
+                        throw new Error('Invalid response format');
+                    }
                     
                     setSummary(json.summary || '');
-                    setNews(json.stories || []);
+                    setNews(json.stories.slice(0, 3));
                     
                     const ts = Date.now();
-                    setNewsTimestamp(ts);
+                    setTimestamps(prev => ({...prev, [cacheKey]: ts}));
+                    setLastRequestTime(prev => ({...prev, [cacheKey]: ts}));
+                    
                     localStorage.setItem('cached_news', JSON.stringify({
-                        stories: json.stories,
+                        stories: json.stories.slice(0, 3),
                         summary: json.summary,
                         type: type,
                         timestamp: ts
                     }));
                 } catch (err) {
-                    setError(err.message);
+                    console.error('News fetch error:', err);
+                    setError(err.message || 'Failed to load news');
                 } finally {
                     setLoading(false);
                 }
-            }, [newsTimestamp, apiKey, canMakeRequest]);
-
-            const fetchBettingFavorites = useCallback(async (force = false) => {
-                if (!force && bettingTimestamp && Date.now() - bettingTimestamp < CACHE_DURATION) return;
-                
-                setBettingLoading(true);
-                setError('');
-
-                try {
-                    const data = await callAPI([{
-                        role: "user",
-                        content: `Today: ${getToday()}
-oddschecker PGA Tour this week. Top 5.
-JSON: {"tournament":"","favorites":[{"rank":1,"player":"","odds":"","form":""},{"rank":2,"player":"","odds":"","form":""},{"rank":3,"player":"","odds":"","form":""},{"rank":4,"player":"","odds":"","form":""},{"rank":5,"player":"","odds":"","form":""}]}`
-                    }], 850);
-
-                    const text = data.content.map(i => i.type === "text" ? i.text : "").join("\n");
-                    const json = JSON.parse(extractJSON(text.replace(/```json|```/g, "").trim()));
-                    
-                    setBettingFavorites(json);
-                    
-                    const ts = Date.now();
-                    setBettingTimestamp(ts);
-                    localStorage.setItem('cached_betting', JSON.stringify({ data: json, timestamp: ts }));
-                } catch (err) {
-                    setError(err.message);
-                } finally {
-                    setBettingLoading(false);
-                }
-            }, [bettingTimestamp, apiKey, canMakeRequest]);
+            };
 
             const shouldShowPredictions = () => {
                 const day = new Date().getDay();
                 return day >= 3 || day === 0;
             };
 
-            const fetchPredictions = useCallback(async (tour, force = false) => {
+            const fetchPredictions = async (tour) => {
                 if (!shouldShowPredictions()) {
                     setPredictions({ comeSoonMessage: true });
                     return;
                 }
                 
-                if (!force && predictionsTimestamp && Date.now() - predictionsTimestamp < CACHE_DURATION && selectedTour === tour) return;
+                const cacheKey = `pred_${tour}`;
+                const now = Date.now();
+                
+                if (timestamps[cacheKey] && now - timestamps[cacheKey] < CACHE_DURATION) {
+                    return;
+                }
+                
+                if (!canMakeRequest(cacheKey)) return;
 
                 setPredictionsLoading(true);
                 setError('');
+                setPredictions(null);
 
                 try {
                     const tourName = tour === 'pga' ? 'PGA Tour' : 'DP World Tour';
-                    const tourSite = tour === 'pga' ? 'pgatour.com' : 'dpworldtour.com';
+                    const tourSite = tour === 'pga' ? 'pgatour.com' : 'europeantour.com';
+                    const statsSite = tour === 'pga' ? 'datagolf.com pgatour.com' : 'datagolf.com europeantour.com';
+                    
+                    const today = getToday();
                     
                     const data = await callAPI([{
                         role: "user",
-                        content: `Today: ${getToday()}
-${tourName} this week. ${tourSite}, weather.com, oddschecker
-5 VALUE 20/1+
-JSON: {"tournament":"","course":"","location":"","dates":"","weather":"","conditions":"","valuePicks":[{"rank":1,"player":"","odds":"","why":""},{"rank":2,"player":"","odds":"","why":""},{"rank":3,"player":"","odds":"","why":""},{"rank":4,"player":"","odds":"","why":""},{"rank":5,"player":"","odds":"","why":""}]}`
-                    }], 1000);
+                        content: `Today is ${today}.
 
-                    const text = data.content.map(i => i.type === "text" ? i.text : "").join("\n");
-                    const json = JSON.parse(extractJSON(text.replace(/```json|```/g, "").trim()));
+${tourName} tournament THIS WEEK (January 2026).
+
+Sources: ${tourSite} ${statsSite} oddschecker weather.com
+
+Find 5 value picks with 20/1+ odds that match the course profile.
+
+Respond ONLY with this JSON format (no markdown, no code fences):
+{"tournament":"","course":"","location":"","dates":"","courseProfile":{"length":"","par":"","keyFeatures":["",""],"favoredSkills":[""]},"weather":"","valuePicks":[{"rank":1,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":2,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":3,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":4,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":5,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}}]}`
+                    }], 1800);
+
+                    const text = data.content
+                        .filter(i => i.type === "text")
+                        .map(i => i.text)
+                        .join("");
                     
-                    if (json.valuePicks) {
-                        json.topPicks = json.valuePicks.map(p => ({
-                            rank: p.rank,
-                            player: p.player,
-                            odds: p.odds,
-                            reasoning: p.why || 'Value',
-                            keyStrengths: ['Course fit', 'Weather'],
-                            confidence: p.rank <= 2 ? 'high' : 'medium'
-                        }));
+                    const json = extractJSON(text);
+                    
+                    if (!json.valuePicks || !Array.isArray(json.valuePicks)) {
+                        throw new Error('Invalid predictions format');
                     }
                     
-                    if (!json.courseAnalysis) {
-                        json.courseAnalysis = {
-                            conditions: json.conditions || 'Standard',
-                            keyFactors: ['Driving', 'Approach', 'Putting'],
-                            weather: json.weather || 'Standard'
-                        };
-                    } else if (json.weather) {
-                        json.courseAnalysis.weather = json.weather;
-                    }
-                    
+                    json.topPicks = json.valuePicks;
                     setPredictions(json);
                     
                     const ts = Date.now();
-                    setPredictionsTimestamp(ts);
-                    localStorage.setItem('cached_predictions', JSON.stringify({ data: json, tour, timestamp: ts }));
+                    setTimestamps(prev => ({...prev, [cacheKey]: ts}));
+                    setLastRequestTime(prev => ({...prev, [cacheKey]: ts}));
+                    
+                    localStorage.setItem('cached_predictions', JSON.stringify({ 
+                        data: json, 
+                        tour, 
+                        timestamp: ts 
+                    }));
                 } catch (err) {
-                    setError(err.message);
+                    console.error('Predictions fetch error:', err);
+                    setError(err.message || 'Failed to load predictions');
                 } finally {
                     setPredictionsLoading(false);
                 }
-            }, [predictionsTimestamp, selectedTour, apiKey, canMakeRequest]);
-
-            const handleRefresh = () => {
-                if (activeTab === 'news') fetchGolfNews(newsType, true);
-                else if (activeTab === 'predictions') fetchPredictions(selectedTour, true);
-                else if (activeTab === 'betting') fetchBettingFavorites(true);
             };
 
-            const cacheStatus = useMemo(() => ({
-                news: newsTimestamp && (Date.now() - newsTimestamp < CACHE_DURATION),
-                betting: bettingTimestamp && (Date.now() - bettingTimestamp < CACHE_DURATION),
-                predictions: predictionsTimestamp && (Date.now() - predictionsTimestamp < CACHE_DURATION)
-            }), [newsTimestamp, bettingTimestamp, predictionsTimestamp]);
+            const StatBox = ({ label, value }) => value ? (
+                <div className="bg-white p-2 rounded border">
+                    <p className="text-xs text-gray-600">{label}</p>
+                    <p className="font-bold text-sm">{value}</p>
+                </div>
+            ) : null;
 
             return (
                 <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 p-3 sm:p-6">
@@ -326,29 +325,21 @@ JSON: {"tournament":"","course":"","location":"","dates":"","weather":"","condit
                                     <div className="w-10 h-10 sm:w-12 sm:h-12 bg-green-600 rounded-full flex items-center justify-center text-white text-xl sm:text-2xl">⛳</div>
                                     <div>
                                         <h1 className="text-xl sm:text-3xl font-bold text-gray-800">Golf AI</h1>
-                                        <p className="text-xs sm:text-base text-gray-600">News & Betting</p>
+                                        <p className="text-xs sm:text-base text-gray-600">News & Value Picks</p>
                                     </div>
                                 </div>
                                 {apiKeyStored && (
-                                    <div className="flex gap-2">
-                                        <button onClick={handleRefresh} disabled={loading || predictionsLoading || bettingLoading || Date.now() < rateLimitUntil} className="px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:bg-gray-400">
-                                            {loading || predictionsLoading || bettingLoading ? "..." : "🔄"}
-                                        </button>
-                                        <button onClick={clearApiKey} className="px-3 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700">Clear</button>
-                                    </div>
+                                    <button onClick={clearApiKey} className="px-3 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700">Clear</button>
                                 )}
                             </div>
 
                             {apiKeyStored && (
-                                <div className="flex gap-2 border-b border-gray-200 overflow-x-auto">
-                                    <button onClick={() => setActiveTab('news')} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'news' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>
-                                        📰 News {cacheStatus.news && <span className="text-xs">●</span>}
+                                <div className="flex gap-2 border-b border-gray-200">
+                                    <button onClick={() => setActiveTab('news')} className={`px-4 py-2 font-semibold text-sm ${activeTab === 'news' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>
+                                        📰 News
                                     </button>
-                                    <button onClick={() => { setActiveTab('betting'); if (!bettingFavorites || !cacheStatus.betting) fetchBettingFavorites(); }} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'betting' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>
-                                        💰 Betting {cacheStatus.betting && <span className="text-xs">●</span>}
-                                    </button>
-                                    <button onClick={() => { setActiveTab('predictions'); if (!predictions || !cacheStatus.predictions) fetchPredictions('pga'); }} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'predictions' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>
-                                        🎯 Value {cacheStatus.predictions && <span className="text-xs">●</span>}
+                                    <button onClick={() => setActiveTab('predictions')} className={`px-4 py-2 font-semibold text-sm ${activeTab === 'predictions' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>
+                                        🎯 Value Picks
                                     </button>
                                 </div>
                             )}
@@ -356,7 +347,7 @@ JSON: {"tournament":"","course":"","location":"","dates":"","weather":"","condit
 
                         {error && (
                             <div className="bg-red-100 border border-red-400 text-red-700 px-3 py-2 rounded-lg mb-4 text-sm">
-                                ⚠️ {error}
+                                {error}
                             </div>
                         )}
 
@@ -366,12 +357,12 @@ JSON: {"tournament":"","course":"","location":"","dates":"","weather":"","condit
                                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
                                     <p className="text-sm text-blue-800 mb-2"><strong>Get key:</strong></p>
                                     <ol className="list-decimal list-inside space-y-1 text-sm text-blue-800">
-                                        <li><a href="https://console.anthropic.com/" target="_blank" className="underline">console.anthropic.com</a></li>
+                                        <li><a href="https://console.anthropic.com/" target="_blank" rel="noopener noreferrer" className="underline">console.anthropic.com</a></li>
                                         <li>API Keys → Create</li>
                                         <li>Paste below</li>
                                     </ol>
                                 </div>
-                                <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-ant-..." className="w-full px-3 py-2 border rounded-lg mb-3 text-sm" />
+                                <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && saveApiKey()} placeholder="sk-ant-..." className="w-full px-3 py-2 border rounded-lg mb-3 text-sm" />
                                 <button onClick={saveApiKey} className="w-full px-4 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700">Save</button>
                             </div>
                         )}
@@ -387,75 +378,68 @@ JSON: {"tournament":"","course":"","location":"","dates":"","weather":"","condit
                                             { id: 'european', label: 'DP World' },
                                             { id: 'players', label: 'Players' }
                                         ].map(t => (
-                                            <button key={t.id} onClick={() => { setNewsType(t.id); fetchGolfNews(t.id); }} disabled={loading} className={`px-3 py-2 rounded-lg text-sm ${newsType === t.id ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700'}`}>{t.label}</button>
+                                            <button 
+                                                key={t.id} 
+                                                onClick={() => {
+                                                    setNewsType(t.id);
+                                                    fetchGolfNews(t.id);
+                                                }} 
+                                                disabled={loading} 
+                                                className={`px-3 py-2 rounded-lg text-sm ${newsType === t.id ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700'} disabled:opacity-50`}>
+                                                {t.label}
+                                            </button>
                                         ))}
                                     </div>
                                 </div>
 
-                                {!news.length && !loading && <div className="bg-white rounded-lg shadow-lg p-6 text-center"><p className="text-sm text-gray-600">Select category</p></div>}
+                                {loading && (
+                                    <div className="bg-white rounded-lg shadow-lg p-8 text-center">
+                                        <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
+                                        <p className="text-sm text-gray-600 mt-4">Loading news...</p>
+                                    </div>
+                                )}
 
-                                {loading && <div className="bg-white rounded-lg shadow-lg p-8 text-center"><div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div></div>}
+                                {!loading && !news.length && (
+                                    <div className="bg-white rounded-lg shadow-lg p-6 text-center">
+                                        <p className="text-sm text-gray-600">Click a category to load news</p>
+                                    </div>
+                                )}
 
-                                {summary && !loading && (
+                                {!loading && summary && (
                                     <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
                                         <h2 className="text-lg font-bold mb-2">📅 Latest</h2>
                                         <p className="text-sm text-gray-700">{summary}</p>
                                     </div>
                                 )}
 
-                                {news.length > 0 && !loading && (
+                                {!loading && news.length > 0 && (
                                     <div className="space-y-3">
                                         {news.map((s, i) => (
                                             <div key={i} className="bg-white rounded-lg shadow-lg p-4">
                                                 <div className="flex gap-3">
-                                                    <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center text-white font-bold text-sm">{i + 1}</div>
+                                                    <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0">{i + 1}</div>
                                                     <div className="flex-1">
-                                                        <h3 className="text-base font-bold mb-2">{s.title}</h3>
+                                                        <h3 className="text-base font-bold mb-2">
+                                                            {s.url ? (
+                                                                <a href={s.url} target="_blank" rel="noopener noreferrer" className="text-green-700 hover:text-green-900 hover:underline">
+                                                                    {s.title} 🔗
+                                                                </a>
+                                                            ) : s.title}
+                                                        </h3>
                                                         <p className="text-sm text-gray-700 mb-2">{s.summary}</p>
-                                                        <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">{s.source}</span>
+                                                        <div className="flex items-center justify-between flex-wrap gap-2">
+                                                            <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">{s.source}</span>
+                                                            {s.url && (
+                                                                <a href={s.url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:text-blue-800 font-semibold">
+                                                                    Read More →
+                                                                </a>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </div>
                                         ))}
                                     </div>
-                                )}
-                            </>
-                        )}
-
-                        {activeTab === 'betting' && apiKeyStored && (
-                            <>
-                                {!bettingFavorites && !bettingLoading && (
-                                    <div className="bg-white rounded-lg shadow-lg p-6 text-center">
-                                        <button onClick={() => fetchBettingFavorites(true)} className="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700">Load Favorites</button>
-                                    </div>
-                                )}
-
-                                {bettingLoading && <div className="bg-white rounded-lg shadow-lg p-8 text-center"><div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div></div>}
-
-                                {bettingFavorites && !bettingLoading && (
-                                    <>
-                                        <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
-                                            <h2 className="text-xl font-bold mb-2">💰 Favorites</h2>
-                                            {bettingFavorites.tournament && <p className="text-sm text-gray-600"><strong>{bettingFavorites.tournament}</strong></p>}
-                                        </div>
-
-                                        <div className="space-y-3">
-                                            {bettingFavorites.favorites && bettingFavorites.favorites.map((f, i) => (
-                                                <div key={i} className="bg-white rounded-lg shadow-lg p-4">
-                                                    <div className="flex gap-3">
-                                                        <div className={`w-12 h-12 ${i === 0 ? 'bg-yellow-400 text-yellow-900' : i === 1 ? 'bg-gray-300 text-gray-800' : i === 2 ? 'bg-orange-300 text-orange-900' : 'bg-blue-100 text-blue-800'} rounded-full flex items-center justify-center font-bold text-lg`}>{f.rank}</div>
-                                                        <div className="flex-1">
-                                                            <div className="flex justify-between items-start mb-2 flex-wrap gap-2">
-                                                                <h3 className="text-lg font-bold">{f.player}</h3>
-                                                                <span className="px-4 py-2 bg-purple-600 text-white rounded-full text-base font-bold">{f.odds}</span>
-                                                            </div>
-                                                            {f.form && <p className="text-sm text-gray-600">{f.form}</p>}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </>
                                 )}
                             </>
                         )}
@@ -464,40 +448,83 @@ JSON: {"tournament":"","course":"","location":"","dates":"","weather":"","condit
                             <>
                                 <div className="bg-white rounded-lg shadow-lg p-3 mb-4">
                                     <div className="flex gap-2">
-                                        <button onClick={() => { setSelectedTour('pga'); fetchPredictions('pga'); }} disabled={predictionsLoading} className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm ${selectedTour === 'pga' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>PGA</button>
-                                        <button onClick={() => { setSelectedTour('dp'); fetchPredictions('dp'); }} disabled={predictionsLoading} className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm ${selectedTour === 'dp' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>DP World</button>
+                                        <button 
+                                            onClick={() => {
+                                                setSelectedTour('pga');
+                                                fetchPredictions('pga');
+                                            }} 
+                                            disabled={predictionsLoading} 
+                                            className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm ${selectedTour === 'pga' ? 'bg-green-600 text-white' : 'bg-gray-200'} disabled:opacity-50`}>
+                                            PGA
+                                        </button>
+                                        <button 
+                                            onClick={() => {
+                                                setSelectedTour('dp');
+                                                fetchPredictions('dp');
+                                            }} 
+                                            disabled={predictionsLoading} 
+                                            className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm ${selectedTour === 'dp' ? 'bg-green-600 text-white' : 'bg-gray-200'} disabled:opacity-50`}>
+                                            DP World
+                                        </button>
                                     </div>
                                 </div>
 
-                                {predictionsLoading && <div className="bg-white rounded-lg shadow-lg p-8 text-center"><div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div></div>}
-
-                                {predictions && predictions.comeSoonMessage && (
+                                {predictionsLoading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
-                                        <div className="text-6xl mb-4">⛳</div>
-                                        <h2 className="text-2xl font-bold text-gray-800 mb-3">Coming Wednesday</h2>
-                                        <p className="text-gray-600">Value picks updated every <strong>Wednesday</strong></p>
+                                        <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
+                                        <p className="text-sm text-gray-600 mt-4">Analyzing course & players...</p>
                                     </div>
                                 )}
 
-                                {predictions && !predictions.comeSoonMessage && !predictionsLoading && (
+                                {!predictionsLoading && predictions?.comeSoonMessage && (
+                                    <div className="bg-white rounded-lg shadow-lg p-8 text-center">
+                                        <div className="text-6xl mb-4">⛳</div>
+                                        <h2 className="text-2xl font-bold text-gray-800 mb-3">Coming Wednesday</h2>
+                                        <p className="text-gray-600">Value picks available <strong>Wed-Sun</strong></p>
+                                    </div>
+                                )}
+
+                                {!predictionsLoading && predictions && !predictions.comeSoonMessage && (
                                     <>
                                         <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
-                                            <h2 className="text-lg font-bold mb-3">{predictions.tournament}</h2>
+                                            <h2 className="text-lg font-bold mb-3">📍 {predictions.course}</h2>
+                                            
                                             <div className="grid grid-cols-2 gap-3 mb-3 text-sm">
-                                                <div><p className="text-xs text-gray-600">Course</p><p className="font-semibold">{predictions.course}</p></div>
-                                                <div><p className="text-xs text-gray-600">Location</p><p className="font-semibold">{predictions.location}</p></div>
-                                                <div><p className="text-xs text-gray-600">Dates</p><p className="font-semibold">{predictions.dates}</p></div>
+                                                {predictions.location && <div><p className="text-xs text-gray-600">Location</p><p className="font-semibold">{predictions.location}</p></div>}
+                                                {predictions.dates && <div><p className="text-xs text-gray-600">Dates</p><p className="font-semibold">{predictions.dates}</p></div>}
+                                                {predictions.courseProfile?.length && <div><p className="text-xs text-gray-600">Length</p><p className="font-semibold">{predictions.courseProfile.length}</p></div>}
+                                                {predictions.courseProfile?.par && <div><p className="text-xs text-gray-600">Par</p><p className="font-semibold">{predictions.courseProfile.par}</p></div>}
                                             </div>
                                             
-                                            {predictions.courseAnalysis?.weather && (
-                                                <div className="mb-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                                                    <p className="text-xs font-bold text-blue-800 mb-1">🌤️ Weather</p>
-                                                    <p className="text-sm text-blue-900">{predictions.courseAnalysis.weather}</p>
+                                            {predictions.courseProfile?.keyFeatures?.length > 0 && (
+                                                <div className="mb-3 p-3 bg-amber-50 rounded-lg border border-amber-200">
+                                                    <p className="text-xs font-bold text-amber-800 mb-2">🏌️ Course Features</p>
+                                                    <ul className="text-sm text-amber-900 space-y-1">
+                                                        {predictions.courseProfile.keyFeatures.map((f, i) => (
+                                                            <li key={i}>• {f}</li>
+                                                        ))}
+                                                    </ul>
                                                 </div>
                                             )}
                                             
-                                            {predictions.courseAnalysis?.conditions && (
-                                                <div className="mb-3"><p className="text-xs text-gray-600 mb-1">Conditions</p><p className="text-sm">{predictions.courseAnalysis.conditions}</p></div>
+                                            {predictions.courseProfile?.favoredSkills?.length > 0 && (
+                                                <div className="mb-3 p-3 bg-green-50 rounded-lg border border-green-200">
+                                                    <p className="text-xs font-bold text-green-800 mb-2">✅ Skills Needed</p>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {predictions.courseProfile.favoredSkills.map((s, i) => (
+                                                            <span key={i} className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-semibold">
+                                                                {s}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            
+                                            {predictions.weather && (
+                                                <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                                                    <p className="text-xs font-bold text-blue-800 mb-1">🌤️ Weather</p>
+                                                    <p className="text-sm text-blue-900">{predictions.weather}</p>
+                                                </div>
                                             )}
                                         </div>
 
@@ -507,13 +534,39 @@ JSON: {"tournament":"","course":"","location":"","dates":"","weather":"","condit
                                                 {predictions.topPicks?.map((p, i) => (
                                                     <div key={i} className="border-l-4 border-green-600 bg-gradient-to-r from-gray-50 to-green-50 p-3 rounded-r-lg">
                                                         <div className="flex gap-3">
-                                                            <div className={`w-10 h-10 ${i === 0 ? 'bg-yellow-400 text-yellow-900' : i === 1 ? 'bg-gray-300 text-gray-800' : i === 2 ? 'bg-orange-300 text-orange-900' : 'bg-blue-100 text-blue-800'} rounded-full flex items-center justify-center font-bold`}>{p.rank}</div>
+                                                            <div className={`w-10 h-10 flex-shrink-0 ${i === 0 ? 'bg-yellow-400 text-yellow-900' : i === 1 ? 'bg-gray-300 text-gray-800' : i === 2 ? 'bg-orange-300 text-orange-900' : 'bg-blue-100 text-blue-800'} rounded-full flex items-center justify-center font-bold`}>
+                                                                {p.rank}
+                                                            </div>
                                                             <div className="flex-1">
                                                                 <div className="flex justify-between mb-2 flex-wrap gap-2">
                                                                     <h3 className="text-base font-bold">{p.player}</h3>
                                                                     <span className="px-3 py-1 bg-green-600 text-white rounded-full text-sm font-bold">{p.odds}</span>
                                                                 </div>
-                                                                <p className="text-sm text-gray-700">{p.reasoning}</p>
+                                                                
+                                                                {p.coursefit && (
+                                                                    <div className="mb-2 p-2 bg-blue-50 rounded border border-blue-200">
+                                                                        <p className="text-xs font-bold text-blue-800">Course Fit:</p>
+                                                                        <p className="text-sm text-blue-900">{p.coursefit}</p>
+                                                                    </div>
+                                                                )}
+                                                                
+                                                                {p.stats && (
+                                                                    <div className="mb-2 grid grid-cols-2 gap-2 text-xs">
+                                                                        <StatBox label="Driving Acc" value={p.stats.drivingAcc} />
+                                                                        <StatBox label="GIR %" value={p.stats.gir} />
+                                                                        <StatBox label="SG: Approach" value={p.stats.sgApproach} />
+                                                                        <StatBox label="SG: Putting" value={p.stats.sgPutting} />
+                                                                    </div>
+                                                                )}
+                                                                
+                                                                {p.stats?.recentForm && (
+                                                                    <div className="mb-2 p-2 bg-purple-50 rounded border border-purple-200">
+                                                                        <p className="text-xs font-bold text-purple-800">Recent Form:</p>
+                                                                        <p className="text-sm text-purple-900">{p.stats.recentForm}</p>
+                                                                    </div>
+                                                                )}
+                                                                
+                                                                <p className="text-sm text-gray-700">{p.why}</p>
                                                             </div>
                                                         </div>
                                                     </div>
@@ -522,10 +575,18 @@ JSON: {"tournament":"","course":"","location":"","dates":"","weather":"","condit
                                         </div>
                                     </>
                                 )}
+
+                                {!predictionsLoading && !predictions && (
+                                    <div className="bg-white rounded-lg shadow-lg p-6 text-center">
+                                        <p className="text-sm text-gray-600">Click a tour to load predictions</p>
+                                    </div>
+                                )}
                             </>
                         )}
 
-                        <div className="mt-6 text-center text-xs text-gray-600"><p>Powered by Claude AI</p></div>
+                        <div className="mt-6 text-center text-xs text-gray-600">
+                            <p>Powered by Claude AI</p>
+                        </div>
                     </div>
                 </div>
             );
