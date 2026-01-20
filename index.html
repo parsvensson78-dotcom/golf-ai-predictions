@@ -28,6 +28,9 @@
             const [predictions, setPredictions] = useState(null);
             const [predictionsLoading, setPredictionsLoading] = useState(false);
             const [selectedTour, setSelectedTour] = useState('pga');
+            
+            const [bettingFavorites, setBettingFavorites] = useState(null);
+            const [bettingLoading, setBettingLoading] = useState(false);
 
             useEffect(() => {
                 const stored = localStorage.getItem('anthropic_api_key');
@@ -89,6 +92,10 @@
                 return await response.json();
             };
 
+            const getCurrentYear = () => {
+                return new Date().getFullYear();
+            };
+
             const fetchGolfNews = async (type) => {
                 setLoading(true);
                 setError('');
@@ -96,22 +103,38 @@
                 setNews([]);
 
                 try {
+                    const year = getCurrentYear();
                     let query = '';
-                    if (type === 'pga') query = 'PGA Tour latest';
-                    else if (type === 'majors') query = 'golf majors';
-                    else if (type === 'european') query = 'DP World Tour latest';
-                    else if (type === 'players') query = 'golf players';
-                    else query = 'golf latest';
+                    let focus = 'upcoming tournaments, schedule changes, player commitments';
+                    
+                    if (type === 'pga') {
+                        query = `PGA Tour upcoming ${year}`;
+                        focus = 'next tournament, player field announcements, schedule';
+                    } else if (type === 'majors') {
+                        query = `golf majors upcoming ${year}`;
+                        focus = 'upcoming majors, qualifying, invitations';
+                    } else if (type === 'european') {
+                        query = `DP World Tour upcoming ${year}`;
+                        focus = 'next tournament, European Tour schedule';
+                    } else if (type === 'players') {
+                        query = `golf players commitments ${year}`;
+                        focus = 'player schedules, who is playing where';
+                    } else {
+                        query = `golf upcoming events ${year}`;
+                    }
 
                     const data = await callClaudeAPI([
                         {
                             role: "user",
                             content: `Search: ${query}
 
-3 recent stories. Brief.
+FOCUS: UPCOMING events in ${year}, not past results.
+Find: ${focus}
+
+3 stories about future tournaments/events.
 
 JSON:
-{"summary":"Overview","stories":[{"title":"Title","summary":"What happened","source":"Source"}]}`
+{"summary":"What's coming up","stories":[{"title":"Title","summary":"Upcoming event details","source":"Source"}]}`
                         }
                     ], 700);
 
@@ -134,6 +157,44 @@ JSON:
                 }
             };
 
+            const fetchBettingFavorites = async () => {
+                setBettingLoading(true);
+                setError('');
+
+                try {
+                    const year = getCurrentYear();
+                    const data = await callClaudeAPI([
+                        {
+                            role: "user",
+                            content: `Search oddschecker.com for current golf betting favorites ${year}.
+
+IMPORTANT: Only ${year} tournaments and odds.
+
+Find top 5 players with shortest odds right now.
+
+JSON:
+{"tournament":"Tournament name","favorites":[{"rank":1,"player":"Name","odds":"6/1","form":"Recent form note"},{"rank":2,"player":"Name","odds":"8/1","form":"Note"},{"rank":3,"player":"Name","odds":"10/1","form":"Note"},{"rank":4,"player":"Name","odds":"12/1","form":"Note"},{"rank":5,"player":"Name","odds":"14/1","form":"Note"}]}`
+                        }
+                    ], 800);
+
+                    const fullResponse = data.content
+                        .map(item => (item.type === "text" ? item.text : ""))
+                        .filter(Boolean)
+                        .join("\n");
+
+                    let cleanResponse = fullResponse.replace(/```json\n?|\n?```/g, "").trim();
+                    cleanResponse = extractJSON(cleanResponse);
+                    
+                    const bettingData = JSON.parse(cleanResponse);
+                    setBettingFavorites(bettingData);
+                } catch (err) {
+                    console.error("Error:", err);
+                    setError(`${err.message} - Try refresh`);
+                } finally {
+                    setBettingLoading(false);
+                }
+            };
+
             const shouldShowPredictions = () => {
                 const now = new Date();
                 const dayOfWeek = now.getDay();
@@ -150,31 +211,34 @@ JSON:
                 setError('');
 
                 try {
+                    const year = getCurrentYear();
                     const tourName = tour === 'pga' ? 'PGA Tour' : 'DP World Tour';
                     const tourSite = tour === 'pga' ? 'pgatour.com' : 'dpworldtour.com';
                     
                     const data = await callClaudeAPI([
                         {
                             role: "user",
-                            content: `${tourName} this week.
+                            content: `${tourName} tournament THIS WEEK in ${year}.
+
+CRITICAL: Current year is ${year}. Only use ${year} data.
 
 SOURCES ONLY:
-- Field: ${tourSite}
-- Weather: weather.com
-- Odds: oddschecker.com
+- Field: ${tourSite} (${year} field)
+- Weather: weather.com (Thu-Sun this week)
+- Odds: oddschecker.com (${year} odds ONLY)
 
-Find tournament, field list, weather forecast, odds.
+Find tournament starting Thursday, field list, 4-day weather forecast, current ${year} betting odds.
 
-VALUE PICKS (20/1+ from oddschecker):
+VALUE PICKS (20/1+ odds from ${year}):
 - Match stats to weather + course
 - Recent top 20 finishes
 - Course history
 - Weather fit (windy/wet/cold/firm)
 
 JSON:
-{"tournament":"Name","course":"Course","location":"City","dates":"Jan 23-26","weather":"Weather.com forecast summary","conditions":"Course setup","valuePicks":[{"rank":1,"player":"Name (IN FIELD)","odds":"25/1","why":"Weather + stats reason"},{"rank":2,"player":"Name","odds":"30/1","why":"Reason"},{"rank":3,"player":"Name","odds":"35/1","why":"Reason"},{"rank":4,"player":"Name","odds":"40/1","why":"Reason"},{"rank":5,"player":"Name","odds":"50/1","why":"Reason"}]}
+{"tournament":"Name","course":"Course","location":"City","dates":"Month DD-DD, ${year}","weather":"Thu-Sun forecast from weather.com","conditions":"Course setup","valuePicks":[{"rank":1,"player":"Name (IN FIELD)","odds":"25/1","why":"Weather + stats reason"},{"rank":2,"player":"Name","odds":"30/1","why":"Reason"},{"rank":3,"player":"Name","odds":"35/1","why":"Reason"},{"rank":4,"player":"Name","odds":"40/1","why":"Reason"},{"rank":5,"player":"Name","odds":"50/1","why":"Reason"}]}
 
-Verify players in field on ${tourSite}. Higher odds better.`
+Verify: Players in ${year} field on ${tourSite}. Odds from ${year} only. Higher odds better.`
                         }
                     ], 950);
 
@@ -232,6 +296,8 @@ Verify players in field on ${tourSite}. Higher odds better.`
                     fetchGolfNews(newsType);
                 } else if (activeTab === 'predictions') {
                     fetchPredictions(selectedTour);
+                } else if (activeTab === 'betting') {
+                    fetchBettingFavorites();
                 }
             };
 
@@ -249,19 +315,19 @@ Verify players in field on ${tourSite}. Higher odds better.`
             return (
                 <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 p-3 sm:p-6">
                     <div className="max-w-6xl mx-auto">
-                        <div className="bg-white rounded-lg shadow-lg p-4 sm:p-6 mb-4 sm:pb-6">
+                        <div className="bg-white rounded-lg shadow-lg p-4 sm:p-6 mb-4 sm:mb-6">
                             <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                                 <div className="flex items-center gap-3">
                                     <div className="w-10 h-10 sm:w-12 sm:h-12 bg-green-600 rounded-full flex items-center justify-center text-white text-xl sm:text-2xl">⛳</div>
                                     <div>
                                         <h1 className="text-xl sm:text-3xl font-bold text-gray-800">Golf AI</h1>
-                                        <p className="text-xs sm:text-base text-gray-600">News & Value Picks</p>
+                                        <p className="text-xs sm:text-base text-gray-600">News & Betting Intel</p>
                                     </div>
                                 </div>
                                 {apiKeyStored && (
                                     <div className="flex gap-2">
-                                        <button onClick={handleRefresh} disabled={loading || predictionsLoading} className="px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:bg-gray-400">
-                                            {(loading || predictionsLoading) ? "..." : "🔄"}
+                                        <button onClick={handleRefresh} disabled={loading || predictionsLoading || bettingLoading} className="px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:bg-gray-400">
+                                            {(loading || predictionsLoading || bettingLoading) ? "..." : "🔄"}
                                         </button>
                                         <button onClick={clearApiKey} className="px-3 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700">Clear</button>
                                     </div>
@@ -269,9 +335,10 @@ Verify players in field on ${tourSite}. Higher odds better.`
                             </div>
 
                             {apiKeyStored && (
-                                <div className="flex gap-2 border-b border-gray-200">
-                                    <button onClick={() => setActiveTab('news')} className={`px-4 py-2 font-semibold text-sm ${activeTab === 'news' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>📰 News</button>
-                                    <button onClick={() => { setActiveTab('predictions'); if (!predictions) fetchPredictions('pga'); }} className={`px-4 py-2 font-semibold text-sm ${activeTab === 'predictions' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>🎯 Value Picks</button>
+                                <div className="flex gap-2 border-b border-gray-200 overflow-x-auto">
+                                    <button onClick={() => setActiveTab('news')} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'news' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>📰 News</button>
+                                    <button onClick={() => { setActiveTab('betting'); if (!bettingFavorites) fetchBettingFavorites(); }} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'betting' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>💰 Betting</button>
+                                    <button onClick={() => { setActiveTab('predictions'); if (!predictions) fetchPredictions('pga'); }} className={`px-4 py-2 font-semibold text-sm whitespace-nowrap ${activeTab === 'predictions' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-600'}`}>🎯 Value</button>
                                 </div>
                             )}
                         </div>
@@ -320,7 +387,7 @@ Verify players in field on ${tourSite}. Higher odds better.`
 
                                 {!news.length && !loading && (
                                     <div className="bg-white rounded-lg shadow-lg p-6 text-center">
-                                        <p className="text-sm text-gray-600">Select a category for latest news</p>
+                                        <p className="text-sm text-gray-600">Select a category for upcoming events</p>
                                     </div>
                                 )}
 
@@ -333,13 +400,14 @@ Verify players in field on ${tourSite}. Higher odds better.`
 
                                 {summary && !loading && (
                                     <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
-                                        <h2 className="text-lg font-bold mb-2">📰 Latest</h2>
+                                        <h2 className="text-lg font-bold mb-2">📅 Coming Up</h2>
                                         <p className="text-sm text-gray-700">{summary}</p>
                                     </div>
                                 )}
 
                                 {news.length > 0 && !loading && (
                                     <div className="space-y-3">
+                                        <h2 className="text-xl font-bold text-gray-800 mb-3">Upcoming Events</h2>
                                         {news.map((story, i) => (
                                             <div key={i} className="bg-white rounded-lg shadow-lg p-4">
                                                 <div className="flex gap-3">
@@ -353,6 +421,61 @@ Verify players in field on ${tourSite}. Higher odds better.`
                                             </div>
                                         ))}
                                     </div>
+                                )}
+                            </>
+                        )}
+
+                        {activeTab === 'betting' && apiKeyStored && (
+                            <>
+                                {!bettingFavorites && !bettingLoading && (
+                                    <div className="bg-white rounded-lg shadow-lg p-6 text-center">
+                                        <button onClick={fetchBettingFavorites} className="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700">Load Current Favorites</button>
+                                    </div>
+                                )}
+
+                                {bettingLoading && (
+                                    <div className="bg-white rounded-lg shadow-lg p-8 text-center">
+                                        <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
+                                        <p className="mt-4 text-sm">Checking Oddschecker...</p>
+                                    </div>
+                                )}
+
+                                {bettingFavorites && !bettingLoading && (
+                                    <>
+                                        <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
+                                            <h2 className="text-xl font-bold mb-2">💰 Current Betting Favorites</h2>
+                                            {bettingFavorites.tournament && (
+                                                <p className="text-sm text-gray-600 mb-4">Tournament: <strong>{bettingFavorites.tournament}</strong></p>
+                                            )}
+                                        </div>
+
+                                        <div className="bg-gradient-to-r from-purple-50 to-pink-50 border-2 border-purple-300 rounded-lg p-3 mb-4">
+                                            <p className="text-xs text-purple-800"><strong>Source:</strong> Oddschecker.com - Current market favorites (shortest odds)</p>
+                                        </div>
+
+                                        <div className="space-y-3">
+                                            {bettingFavorites.favorites && bettingFavorites.favorites.map((fav, i) => (
+                                                <div key={i} className="bg-white rounded-lg shadow-lg p-4">
+                                                    <div className="flex gap-3">
+                                                        <div className={`w-12 h-12 ${getRankColor(fav.rank)} rounded-full flex items-center justify-center font-bold text-lg`}>{fav.rank}</div>
+                                                        <div className="flex-1">
+                                                            <div className="flex justify-between items-start mb-2 flex-wrap gap-2">
+                                                                <h3 className="text-lg font-bold">{fav.player}</h3>
+                                                                <span className="px-4 py-2 bg-purple-600 text-white rounded-full text-base font-bold">{fav.odds}</span>
+                                                            </div>
+                                                            {fav.form && <p className="text-sm text-gray-600">{fav.form}</p>}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mt-4">
+                                            <p className="text-xs text-yellow-800">
+                                                <strong>Note:</strong> These are the bookmakers' favorites (shortest odds). For value picks with higher odds, check the Value tab.
+                                            </p>
+                                        </div>
+                                    </>
                                 )}
                             </>
                         )}
@@ -376,11 +499,11 @@ Verify players in field on ${tourSite}. Higher odds better.`
                                 {predictions && predictions.comeSoonMessage && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="text-6xl mb-4">⛳</div>
-                                        <h2 className="text-2xl font-bold text-gray-800 mb-3">Predictions Coming Soon</h2>
+                                        <h2 className="text-2xl font-bold text-gray-800 mb-3">Value Picks Coming Soon</h2>
                                         <p className="text-gray-600 mb-4">Value picks updated every <strong>Wednesday</strong> for Thu-Sun tournaments.</p>
-                                        <p className="text-gray-600">Check back <strong>Wednesday</strong> for weather-adjusted picks!</p>
+                                        <p className="text-gray-600">Check back <strong>Wednesday</strong> for weather-adjusted value picks!</p>
                                         <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-                                            <p className="text-sm text-blue-800"><strong>Schedule:</strong> Predictions Wed-Sun each week</p>
+                                            <p className="text-sm text-blue-800"><strong>Schedule:</strong> Value picks available Wed-Sun each week</p>
                                         </div>
                                     </div>
                                 )}
