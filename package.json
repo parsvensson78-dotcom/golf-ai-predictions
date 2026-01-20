@@ -1,8 +1,8 @@
 {
-  "name": "golf-ai-assistant",
+  "name": "golf-ai-predictions",
   "version": "1.0.0",
-  "description": "Golf news and predictions AI assistant",
+  "type": "module",
   "dependencies": {
-    "node-fetch": "^2.6.7"
+    "@anthropic-ai/sdk": "^0.32.1"
   }
 }
