@@ -26,14 +26,13 @@
             const [selectedTour, setSelectedTour] = useState('pga');
             
             const [lastRequestTime, setLastRequestTime] = useState({});
-            const REQUEST_COOLDOWN = 5000; // Increased from 3s to 5s
+            const REQUEST_COOLDOWN = 5000;
             
             const [timestamps, setTimestamps] = useState({});
             const CACHE_DURATION = 12 * 60 * 60 * 1000;
             
-            // NEW: Track total API calls today
             const [apiCallsToday, setApiCallsToday] = useState(0);
-            const MAX_CALLS_PER_DAY = 10; // Conservative limit
+            const MAX_CALLS_PER_DAY = 10;
 
             const getToday = () => {
                 const now = new Date();
@@ -84,7 +83,6 @@
                         if (date === today) {
                             setApiCallsToday(count);
                         } else {
-                            // Reset count for new day
                             localStorage.setItem('api_call_count', JSON.stringify({ count: 0, date: today }));
                             setApiCallsToday(0);
                         }
@@ -155,13 +153,11 @@
             };
 
             const canMakeRequest = (key) => {
-                // Check daily limit
                 if (apiCallsToday >= MAX_CALLS_PER_DAY) {
                     setError(`Daily limit reached (${MAX_CALLS_PER_DAY} calls). Try again tomorrow.`);
                     return false;
                 }
                 
-                // Check cooldown
                 const now = Date.now();
                 const last = lastRequestTime[key] || 0;
                 if (now - last < REQUEST_COOLDOWN) {
@@ -173,7 +169,6 @@
             };
 
             const callAPI = async (messages, maxTokens = 1024) => {
-                // Create abort controller for manual timeout control (90 seconds)
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 90000);
                 
@@ -196,7 +191,6 @@
                         const errorData = await response.json().catch(() => ({}));
                         const errorMsg = errorData.error?.message || `HTTP ${response.status}`;
                         
-                        // Special handling for rate limits
                         if (response.status === 429) {
                             throw new Error('Rate limit reached. Please wait 5-10 minutes before trying again.');
                         }
@@ -234,12 +228,10 @@
                 const cacheKey = `pred_${tour}`;
                 const now = Date.now();
                 
-                // Use cache if available
                 if (timestamps[cacheKey] && now - timestamps[cacheKey] < CACHE_DURATION) {
                     return;
                 }
                 
-                // Check if we can make request
                 if (!canMakeRequest(cacheKey)) return;
 
                 setPredictionsLoading(true);
@@ -249,24 +241,25 @@
                 try {
                     const tourName = tour === 'pga' ? 'PGA Tour' : 'DP World Tour';
                     const tourSite = tour === 'pga' ? 'pgatour.com' : 'europeantour.com';
-                    const statsSite = tour === 'pga' ? 'datagolf.com pgatour.com' : 'datagolf.com europeantour.com';
                     
                     const today = getToday();
                     
-                    // Increment call counter
                     incrementApiCallCount();
                     
                     const data = await callAPI([{
                         role: "user",
                         content: `${today}. ${tourName} this week.
 
-Sources: ${tourSite} datagolf.com draftkings.com
+Search ${tourSite} for tournament name, course, location, dates.
+Search draftkings.com for current golf odds.
 
-2 value picks 20/1+ matching course.
+Use your extensive golf knowledge for player statistics (don't search DataGolf - too slow).
+
+2 value picks 20/1+ odds matching course.
 
 JSON:
-{"tournament":"","course":"","location":"","dates":"","courseProfile":{"length":"","par":"","keyFeatures":[""],"favoredSkills":[""]},"weather":"","valuePicks":[{"rank":1,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":2,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}}]}`
-                    }], 1300);
+{"tournament":"","course":"","location":"","dates":"","courseProfile":{"length":"","par":"","keyFeatures":[""],"favoredSkills":[""]},"weather":"typical for location/season","valuePicks":[{"rank":1,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":2,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}}]}`
+                    }], 1400);
 
                     const text = data.content
                         .filter(i => i.type === "text")
@@ -383,7 +376,6 @@ JSON:
                                     </div>
                                 </div>
 
-                                {/* Daily limit warning */}
                                 {apiCallsToday >= MAX_CALLS_PER_DAY && (
                                     <div className="bg-yellow-100 border border-yellow-400 text-yellow-800 px-3 py-2 rounded-lg mb-4 text-sm">
                                         ⚠️ Daily API limit reached ({MAX_CALLS_PER_DAY} calls). Resets at midnight. Use cached data or try again tomorrow.
@@ -408,11 +400,11 @@ JSON:
                                 {predictionsLoading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="text-sm text-gray-600 mt-4">Analyzing course & players...</p>
-                                        <p className="text-xs text-gray-500 mt-2">This may take 20-30 seconds</p>
+                                        <p className="text-sm text-gray-600 mt-4">Analyzing tournament & odds...</p>
+                                        <p className="text-xs text-gray-500 mt-2">Using fast sources • 10-20 seconds</p>
                                         <div className="mt-4 text-xs text-gray-400">
-                                            <p>⏳ Searching tournament details...</p>
-                                            <p>📊 Gathering player statistics...</p>
+                                            <p>⏳ Fetching tournament details...</p>
+                                            <p>💰 Getting current odds...</p>
                                             <p>🎯 Calculating top 2 value picks...</p>
                                         </div>
                                     </div>
@@ -492,7 +484,7 @@ JSON:
                                                 {predictions.topPicks?.map((p, i) => (
                                                     <div key={i} className="border-l-4 border-green-600 bg-gradient-to-r from-gray-50 to-green-50 p-3 rounded-r-lg hover:shadow-md transition-shadow">
                                                         <div className="flex gap-3">
-                                                            <div className={`w-10 h-10 flex-shrink-0 ${i === 0 ? 'bg-yellow-400 text-yellow-900' : i === 1 ? 'bg-gray-300 text-gray-800' : i === 2 ? 'bg-orange-300 text-orange-900' : 'bg-blue-100 text-blue-800'} rounded-full flex items-center justify-center font-bold`}>
+                                                            <div className={`w-10 h-10 flex-shrink-0 ${i === 0 ? 'bg-yellow-400 text-yellow-900' : 'bg-gray-300 text-gray-800'} rounded-full flex items-center justify-center font-bold`}>
                                                                 {p.rank}
                                                             </div>
                                                             <div className="flex-1">
@@ -537,7 +529,8 @@ JSON:
                         )}
 
                         <div className="mt-6 text-center text-xs text-gray-600">
-                            <p>Powered by Claude AI • 12hr cache • Data: DataGolf, DraftKings, {selectedTour === 'pga' ? 'PGA Tour' : 'DP World Tour (europeantour.com)'}</p>
+                            <p>Powered by Claude AI • 12hr cache • Live data: Tournament details & odds</p>
+                            <p className="mt-1">Player stats from Claude's golf knowledge (updated in training data)</p>
                         </div>
                     </div>
                 </div>
