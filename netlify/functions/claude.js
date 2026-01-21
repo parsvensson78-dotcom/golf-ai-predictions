@@ -1,5 +1,5 @@
 export const config = {
-  timeout: 60  // 60 seconds
+  timeout: 60
 };
 
 exports.handler = async (event, context) => {
