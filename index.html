@@ -26,10 +26,14 @@
             const [selectedTour, setSelectedTour] = useState('pga');
             
             const [lastRequestTime, setLastRequestTime] = useState({});
-            const REQUEST_COOLDOWN = 3000;
+            const REQUEST_COOLDOWN = 5000; // Increased from 3s to 5s
             
             const [timestamps, setTimestamps] = useState({});
             const CACHE_DURATION = 12 * 60 * 60 * 1000;
+            
+            // NEW: Track total API calls today
+            const [apiCallsToday, setApiCallsToday] = useState(0);
+            const MAX_CALLS_PER_DAY = 10; // Conservative limit
 
             const getToday = () => {
                 const now = new Date();
@@ -49,6 +53,7 @@
                     setActiveTab('predictions');
                 }
                 loadCachedData();
+                loadApiCallCount();
             }, []);
 
             const loadCachedData = () => {
@@ -67,6 +72,33 @@
                 } catch (err) {
                     console.error('Cache load error:', err);
                 }
+            };
+
+            const loadApiCallCount = () => {
+                try {
+                    const callData = localStorage.getItem('api_call_count');
+                    if (callData) {
+                        const { count, date } = JSON.parse(callData);
+                        const today = new Date().toDateString();
+                        
+                        if (date === today) {
+                            setApiCallsToday(count);
+                        } else {
+                            // Reset count for new day
+                            localStorage.setItem('api_call_count', JSON.stringify({ count: 0, date: today }));
+                            setApiCallsToday(0);
+                        }
+                    }
+                } catch (err) {
+                    console.error('Call count load error:', err);
+                }
+            };
+
+            const incrementApiCallCount = () => {
+                const today = new Date().toDateString();
+                const newCount = apiCallsToday + 1;
+                setApiCallsToday(newCount);
+                localStorage.setItem('api_call_count', JSON.stringify({ count: newCount, date: today }));
             };
 
             const saveApiKey = () => {
@@ -89,6 +121,7 @@
                     setPredictions(null);
                     setTimestamps({});
                     setLastRequestTime({});
+                    setApiCallsToday(0);
                 }
             };
 
@@ -106,7 +139,6 @@
                     const jsonStr = cleaned.substring(start, end + 1);
                     const parsed = JSON.parse(jsonStr);
                     
-                    // Validate structure
                     if (!parsed.valuePicks || !Array.isArray(parsed.valuePicks)) {
                         console.error('Invalid structure:', parsed);
                         throw new Error('Invalid response structure - missing valuePicks');
@@ -123,6 +155,13 @@
             };
 
             const canMakeRequest = (key) => {
+                // Check daily limit
+                if (apiCallsToday >= MAX_CALLS_PER_DAY) {
+                    setError(`Daily limit reached (${MAX_CALLS_PER_DAY} calls). Try again tomorrow.`);
+                    return false;
+                }
+                
+                // Check cooldown
                 const now = Date.now();
                 const last = lastRequestTime[key] || 0;
                 if (now - last < REQUEST_COOLDOWN) {
@@ -133,7 +172,8 @@
                 return true;
             };
 
-            const callAPI = async (messages, maxTokens = 1024, retryCount = 0) => {
+            const callAPI = async (messages, maxTokens = 1024) => {
+                // NO AUTO-RETRY - prevents multiple calls on rate limit
                 const response = await fetch("/.netlify/functions/claude", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -149,11 +189,9 @@
                     const errorData = await response.json().catch(() => ({}));
                     const errorMsg = errorData.error?.message || `HTTP ${response.status}`;
                     
-                    // Retry once on network errors (but not auth errors)
-                    if (retryCount === 0 && response.status >= 500) {
-                        console.log('Server error, retrying...');
-                        await new Promise(resolve => setTimeout(resolve, 2000));
-                        return callAPI(messages, maxTokens, 1);
+                    // Special handling for rate limits
+                    if (response.status === 429) {
+                        throw new Error('Rate limit reached. Please wait 5-10 minutes before trying again.');
                     }
                     
                     throw new Error(errorMsg);
@@ -161,14 +199,8 @@
 
                 const data = await response.json();
                 
-                // If truncated, retry with more tokens (once)
-                if (data.stop_reason === 'max_tokens' && retryCount === 0 && maxTokens < 2000) {
-                    console.log('Response truncated, retrying with more tokens...');
-                    return callAPI(messages, maxTokens + 500, 1);
-                }
-                
                 if (data.stop_reason === 'max_tokens') {
-                    throw new Error('Response too long - try again');
+                    throw new Error('Response too long - try again or contact support');
                 }
                 
                 return data;
@@ -188,10 +220,12 @@
                 const cacheKey = `pred_${tour}`;
                 const now = Date.now();
                 
+                // Use cache if available
                 if (timestamps[cacheKey] && now - timestamps[cacheKey] < CACHE_DURATION) {
                     return;
                 }
                 
+                // Check if we can make request
                 if (!canMakeRequest(cacheKey)) return;
 
                 setPredictionsLoading(true);
@@ -205,17 +239,20 @@
                     
                     const today = getToday();
                     
+                    // Increment call counter
+                    incrementApiCallCount();
+                    
                     const data = await callAPI([{
                         role: "user",
                         content: `${today}. ${tourName} this week.
 
 Sources: ${tourSite} ${statsSite} oddschecker weather.com
 
-5 value picks 20/1+ matching course.
+3 value picks 20/1+ matching course.
 
 JSON:
-{"tournament":"","course":"","location":"","dates":"","courseProfile":{"length":"","par":"","keyFeatures":[""],"favoredSkills":[""]},"weather":"","valuePicks":[{"rank":1,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}}]}`
-                    }], 1500); // Reduced from 1800
+{"tournament":"","course":"","location":"","dates":"","courseProfile":{"length":"","par":"","keyFeatures":["",""],"favoredSkills":[""]},"weather":"","valuePicks":[{"rank":1,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":2,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":3,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}}]}`
+                    }], 1500);
 
                     const text = data.content
                         .filter(i => i.type === "text")
@@ -272,7 +309,12 @@ JSON:
                                     </div>
                                 </div>
                                 {apiKeyStored && (
-                                    <button onClick={clearApiKey} className="px-3 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-colors">Clear</button>
+                                    <div className="flex items-center gap-3">
+                                        <div className="text-xs text-gray-600">
+                                            API calls today: {apiCallsToday}/{MAX_CALLS_PER_DAY}
+                                        </div>
+                                        <button onClick={clearApiKey} className="px-3 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-colors">Clear</button>
+                                    </div>
                                 )}
                             </div>
                         </div>
@@ -327,15 +369,23 @@ JSON:
                                     </div>
                                 </div>
 
+                                {/* Daily limit warning */}
+                                {apiCallsToday >= MAX_CALLS_PER_DAY && (
+                                    <div className="bg-yellow-100 border border-yellow-400 text-yellow-800 px-3 py-2 rounded-lg mb-4 text-sm">
+                                        ⚠️ Daily API limit reached ({MAX_CALLS_PER_DAY} calls). Resets at midnight. Use cached data or try again tomorrow.
+                                    </div>
+                                )}
+
                                 {!predictions && !predictionsLoading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="text-6xl mb-4">🎯</div>
                                         <h2 className="text-2xl font-bold text-gray-800 mb-3">{selectedTour === 'pga' ? 'PGA Tour' : 'DP World Tour'} Value Picks</h2>
                                         <p className="text-gray-600 mb-2">AI-powered betting intelligence</p>
-                                        <p className="text-sm text-gray-500 mb-6">Course analysis • Player stats • Value odds 20/1+</p>
+                                        <p className="text-sm text-gray-500 mb-6">Course analysis • Player stats • Value odds 20/1+ • Top 3 picks</p>
                                         <button 
                                             onClick={() => fetchPredictions(selectedTour)}
-                                            className="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition-colors">
+                                            disabled={apiCallsToday >= MAX_CALLS_PER_DAY}
+                                            className="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
                                             Load Predictions
                                         </button>
                                     </div>
@@ -345,6 +395,12 @@ JSON:
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
                                         <p className="text-sm text-gray-600 mt-4">Analyzing course & players...</p>
+                                        <p className="text-xs text-gray-500 mt-2">This may take 45-90 seconds</p>
+                                        <div className="mt-4 text-xs text-gray-400">
+                                            <p>⏳ Searching tournament details...</p>
+                                            <p>📊 Gathering player statistics...</p>
+                                            <p>🎯 Calculating value picks...</p>
+                                        </div>
                                     </div>
                                 )}
 
@@ -410,14 +466,14 @@ JSON:
 
                                             <button 
                                                 onClick={() => fetchPredictions(selectedTour)}
-                                                disabled={predictionsLoading}
-                                                className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors">
+                                                disabled={predictionsLoading || apiCallsToday >= MAX_CALLS_PER_DAY}
+                                                className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
                                                 Refresh Predictions
                                             </button>
                                         </div>
 
                                         <div className="bg-white rounded-lg shadow-lg p-4">
-                                            <h2 className="text-lg font-bold mb-4">💰 Value Picks (20/1+ Odds)</h2>
+                                            <h2 className="text-lg font-bold mb-4">💰 Top 3 Value Picks (20/1+ Odds)</h2>
                                             <div className="space-y-3">
                                                 {predictions.topPicks?.map((p, i) => (
                                                     <div key={i} className="border-l-4 border-green-600 bg-gradient-to-r from-gray-50 to-green-50 p-3 rounded-r-lg hover:shadow-md transition-shadow">
