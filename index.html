@@ -118,8 +118,8 @@
                     body: JSON.stringify({
                         api_key: apiKey,
                         max_tokens: maxTokens,
-                        messages: messages
-                        // NO TOOLS - no web search!
+                        messages: messages,
+                        tools: ['web_search']  // Single search for tournament only
                     })
                 });
 
@@ -155,19 +155,18 @@
 
                 try {
                     const tourName = tour === 'pga' ? 'PGA Tour' : 'DP World Tour';
+                    const tourSite = tour === 'pga' ? 'pgatour.com' : 'europeantour.com';
                     const today = getToday();
                     
                     const data = await callAPI([{
                         role: "user",
                         content: `${today}. ${tourName} this week.
 
-Based on your knowledge of current golf tours, provide 2 value picks.
+Search ${tourSite} ONLY for: tournament name, course, location, dates.
 
-Requirements:
-- Players with 20/1 or longer odds
-- Match course characteristics  
-- Include stats from your knowledge
-- Provide tournament details you know
+Then use your golf knowledge for player picks and stats.
+
+2 value picks 20/1+ odds.
 
 JSON format:
 {"tournament":"tournament name","course":"course name","location":"city, state/country","dates":"Jan XX-XX, 2026","courseProfile":{"length":"7000+ yards","par":"72","keyFeatures":["wide fairways","firm greens"],"favoredSkills":["driving distance","accurate irons"]},"weather":"typical weather","valuePicks":[{"rank":1,"player":"Player Name","odds":"30/1","why":"Strong course fit, good recent form","coursefit":"Excels on similar courses","stats":{"drivingAcc":"65%","gir":"70%","sgApproach":"+0.8","sgPutting":"+0.5","recentForm":"T5, T10, T8"}},{"rank":2,"player":"Player Name","odds":"25/1","why":"...","coursefit":"...","stats":{"drivingAcc":"...","gir":"...","sgApproach":"...","sgPutting":"...","recentForm":"..."}}]}`
@@ -298,8 +297,8 @@ JSON format:
                                 {predictionsLoading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="text-sm text-gray-600 mt-4">Generating predictions...</p>
-                                        <p className="text-xs text-gray-500 mt-2">⚡ Fast mode: 3-5 seconds</p>
+                                        <p className="text-sm text-gray-600 mt-4">Checking tournament schedule...</p>
+                                        <p className="text-xs text-gray-500 mt-2">⚡ Single search: 8-12 seconds</p>
                                     </div>
                                 )}
 
@@ -419,8 +418,8 @@ JSON format:
                         )}
 
                         <div className="mt-6 text-center text-xs text-gray-600">
-                            <p>Powered by Claude AI • 12hr cache • Based on AI golf knowledge</p>
-                            <p className="mt-1 text-yellow-600">⚠️ Verify tournament details & odds before betting</p>
+                            <p>Powered by Claude AI • 12hr cache • Live tournament data from {selectedTour === 'pga' ? 'PGA Tour' : 'DP World Tour'}</p>
+                            <p className="mt-1 text-yellow-600">⚠️ Player stats from AI knowledge • Verify current odds before betting</p>
                         </div>
                     </div>
                 </div>
