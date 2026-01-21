@@ -1,13 +1,15 @@
 [build]
   functions = "netlify/functions"
+  publish = "."
 
 [functions]
   node_bundler = "esbuild"
+  # Function timeout in seconds (max 60 for Pro plan)
+  timeout = 60
 
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
-
+# Optional: specific function timeout
 [functions."claude"]
+  timeout = 60
+
+[functions."scheduled-predictions"]
   timeout = 60
