@@ -25,14 +25,8 @@
             const [predictionsLoading, setPredictionsLoading] = useState(false);
             const [selectedTour, setSelectedTour] = useState('pga');
             
-            const [lastRequestTime, setLastRequestTime] = useState({});
-            const REQUEST_COOLDOWN = 5000;
-            
             const [timestamps, setTimestamps] = useState({});
             const CACHE_DURATION = 12 * 60 * 60 * 1000;
-            
-            const [apiCallsToday, setApiCallsToday] = useState(0);
-            const MAX_CALLS_PER_DAY = 10;
 
             const getToday = () => {
                 const now = new Date();
@@ -52,7 +46,6 @@
                     setActiveTab('predictions');
                 }
                 loadCachedData();
-                loadApiCallCount();
             }, []);
 
             const loadCachedData = () => {
@@ -71,32 +64,6 @@
                 } catch (err) {
                     console.error('Cache load error:', err);
                 }
-            };
-
-            const loadApiCallCount = () => {
-                try {
-                    const callData = localStorage.getItem('api_call_count');
-                    if (callData) {
-                        const { count, date } = JSON.parse(callData);
-                        const today = new Date().toDateString();
-                        
-                        if (date === today) {
-                            setApiCallsToday(count);
-                        } else {
-                            localStorage.setItem('api_call_count', JSON.stringify({ count: 0, date: today }));
-                            setApiCallsToday(0);
-                        }
-                    }
-                } catch (err) {
-                    console.error('Call count load error:', err);
-                }
-            };
-
-            const incrementApiCallCount = () => {
-                const today = new Date().toDateString();
-                const newCount = apiCallsToday + 1;
-                setApiCallsToday(newCount);
-                localStorage.setItem('api_call_count', JSON.stringify({ count: newCount, date: today }));
             };
 
             const saveApiKey = () => {
@@ -118,8 +85,6 @@
                     setActiveTab('setup');
                     setPredictions(null);
                     setTimestamps({});
-                    setLastRequestTime({});
-                    setApiCallsToday(0);
                 }
             };
 
@@ -130,88 +95,40 @@
                     const end = cleaned.lastIndexOf('}');
                     
                     if (start === -1 || end === -1 || start >= end) {
-                        console.error('JSON not found in response:', text);
-                        throw new Error('Invalid API response - no JSON found');
+                        throw new Error('Invalid API response');
                     }
                     
                     const jsonStr = cleaned.substring(start, end + 1);
                     const parsed = JSON.parse(jsonStr);
                     
                     if (!parsed.valuePicks || !Array.isArray(parsed.valuePicks)) {
-                        console.error('Invalid structure:', parsed);
-                        throw new Error('Invalid response structure - missing valuePicks');
+                        throw new Error('Invalid response structure');
                     }
                     
                     return parsed;
                 } catch (e) {
-                    console.error('JSON extraction failed:', e, text);
-                    if (e instanceof SyntaxError) {
-                        throw new Error('Malformed JSON in response');
-                    }
-                    throw e;
+                    throw new Error('Failed to parse response');
                 }
-            };
-
-            const canMakeRequest = (key) => {
-                if (apiCallsToday >= MAX_CALLS_PER_DAY) {
-                    setError(`Daily limit reached (${MAX_CALLS_PER_DAY} calls). Try again tomorrow.`);
-                    return false;
-                }
-                
-                const now = Date.now();
-                const last = lastRequestTime[key] || 0;
-                if (now - last < REQUEST_COOLDOWN) {
-                    const wait = Math.ceil((REQUEST_COOLDOWN - (now - last)) / 1000);
-                    setError(`Wait ${wait}s before next request`);
-                    return false;
-                }
-                return true;
             };
 
             const callAPI = async (messages, maxTokens = 1024) => {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 90000);
-                
-                try {
-                    const response = await fetch("/.netlify/functions/claude", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            api_key: apiKey,
-                            max_tokens: maxTokens,
-                            messages: messages,
-                            tools: ['web_search']
-                        }),
-                        signal: controller.signal
-                    });
+                const response = await fetch("/.netlify/functions/claude", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        api_key: apiKey,
+                        max_tokens: maxTokens,
+                        messages: messages
+                        // NO TOOLS - no web search!
+                    })
+                });
 
-                    clearTimeout(timeoutId);
-
-                    if (!response.ok) {
-                        const errorData = await response.json().catch(() => ({}));
-                        const errorMsg = errorData.error?.message || `HTTP ${response.status}`;
-                        
-                        if (response.status === 429) {
-                            throw new Error('Rate limit reached. Please wait 5-10 minutes before trying again.');
-                        }
-                        
-                        throw new Error(errorMsg);
-                    }
-
-                    const data = await response.json();
-                    
-                    if (data.stop_reason === 'max_tokens') {
-                        throw new Error('Response too long - try again or contact support');
-                    }
-                    
-                    return data;
-                } catch (err) {
-                    clearTimeout(timeoutId);
-                    if (err.name === 'AbortError') {
-                        throw new Error('Request took too long (>90s). The API may be overloaded. Please try again.');
-                    }
-                    throw err;
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error?.message || `Error ${response.status}`);
                 }
+
+                return await response.json();
             };
 
             const shouldShowPredictions = () => {
@@ -231,8 +148,6 @@
                 if (timestamps[cacheKey] && now - timestamps[cacheKey] < CACHE_DURATION) {
                     return;
                 }
-                
-                if (!canMakeRequest(cacheKey)) return;
 
                 setPredictionsLoading(true);
                 setError('');
@@ -240,26 +155,23 @@
 
                 try {
                     const tourName = tour === 'pga' ? 'PGA Tour' : 'DP World Tour';
-                    const tourSite = tour === 'pga' ? 'pgatour.com' : 'europeantour.com';
-                    
                     const today = getToday();
-                    
-                    incrementApiCallCount();
                     
                     const data = await callAPI([{
                         role: "user",
                         content: `${today}. ${tourName} this week.
 
-Search ${tourSite} for tournament name, course, location, dates.
-Search draftkings.com for current golf odds.
+Based on your knowledge of current golf tours, provide 2 value picks.
 
-Use your extensive golf knowledge for player statistics (don't search DataGolf - too slow).
+Requirements:
+- Players with 20/1 or longer odds
+- Match course characteristics  
+- Include stats from your knowledge
+- Provide tournament details you know
 
-2 value picks 20/1+ odds matching course.
-
-JSON:
-{"tournament":"","course":"","location":"","dates":"","courseProfile":{"length":"","par":"","keyFeatures":[""],"favoredSkills":[""]},"weather":"typical for location/season","valuePicks":[{"rank":1,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":2,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}}]}`
-                    }], 1400);
+JSON format:
+{"tournament":"tournament name","course":"course name","location":"city, state/country","dates":"Jan XX-XX, 2026","courseProfile":{"length":"7000+ yards","par":"72","keyFeatures":["wide fairways","firm greens"],"favoredSkills":["driving distance","accurate irons"]},"weather":"typical weather","valuePicks":[{"rank":1,"player":"Player Name","odds":"30/1","why":"Strong course fit, good recent form","coursefit":"Excels on similar courses","stats":{"drivingAcc":"65%","gir":"70%","sgApproach":"+0.8","sgPutting":"+0.5","recentForm":"T5, T10, T8"}},{"rank":2,"player":"Player Name","odds":"25/1","why":"...","coursefit":"...","stats":{"drivingAcc":"...","gir":"...","sgApproach":"...","sgPutting":"...","recentForm":"..."}}]}`
+                    }], 1500);
 
                     const text = data.content
                         .filter(i => i.type === "text")
@@ -272,7 +184,6 @@ JSON:
                     
                     const ts = Date.now();
                     setTimestamps(prev => ({...prev, [cacheKey]: ts}));
-                    setLastRequestTime(prev => ({...prev, [cacheKey]: ts}));
                     
                     localStorage.setItem('cached_predictions', JSON.stringify({ 
                         data: json, 
@@ -280,7 +191,7 @@ JSON:
                         timestamp: ts 
                     }));
                 } catch (err) {
-                    console.error('Predictions fetch error:', err);
+                    console.error('Error:', err);
                     setError(err.message || 'Failed to load predictions');
                 } finally {
                     setPredictionsLoading(false);
@@ -312,16 +223,11 @@ JSON:
                                     <div className="w-10 h-10 sm:w-12 sm:h-12 bg-green-600 rounded-full flex items-center justify-center text-white text-xl sm:text-2xl">⛳</div>
                                     <div>
                                         <h1 className="text-xl sm:text-3xl font-bold text-gray-800">Golf AI</h1>
-                                        <p className="text-xs sm:text-base text-gray-600">Value Picks & Course Analysis</p>
+                                        <p className="text-xs sm:text-base text-gray-600">Value Picks & Analysis</p>
                                     </div>
                                 </div>
                                 {apiKeyStored && (
-                                    <div className="flex items-center gap-3">
-                                        <div className="text-xs text-gray-600">
-                                            API calls today: {apiCallsToday}/{MAX_CALLS_PER_DAY}
-                                        </div>
-                                        <button onClick={clearApiKey} className="px-3 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700 transition-colors">Clear</button>
-                                    </div>
+                                    <button onClick={clearApiKey} className="px-3 py-2 bg-red-600 text-white text-sm rounded-lg hover:bg-red-700">Clear</button>
                                 )}
                             </div>
                         </div>
@@ -338,7 +244,7 @@ JSON:
                                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
                                     <p className="text-sm text-blue-800 mb-2"><strong>Get your Anthropic API key:</strong></p>
                                     <ol className="list-decimal list-inside space-y-1 text-sm text-blue-800">
-                                        <li><a href="https://console.anthropic.com/" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-900">console.anthropic.com</a></li>
+                                        <li><a href="https://console.anthropic.com/" target="_blank" className="underline">console.anthropic.com</a></li>
                                         <li>API Keys → Create Key</li>
                                         <li>Paste below</li>
                                     </ol>
@@ -353,7 +259,7 @@ JSON:
                                 />
                                 <button 
                                     onClick={saveApiKey} 
-                                    className="w-full px-4 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition-colors">
+                                    className="w-full px-4 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700">
                                     Save & Continue
                                 </button>
                             </div>
@@ -365,33 +271,25 @@ JSON:
                                     <div className="flex gap-2">
                                         <button 
                                             onClick={() => setSelectedTour('pga')} 
-                                            className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm transition-colors ${selectedTour === 'pga' ? 'bg-green-600 text-white' : 'bg-gray-200 hover:bg-gray-300'}`}>
+                                            className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm ${selectedTour === 'pga' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>
                                             PGA Tour
                                         </button>
                                         <button 
                                             onClick={() => setSelectedTour('dp')} 
-                                            className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm transition-colors ${selectedTour === 'dp' ? 'bg-green-600 text-white' : 'bg-gray-200 hover:bg-gray-300'}`}>
+                                            className={`flex-1 px-4 py-2 rounded-lg font-semibold text-sm ${selectedTour === 'dp' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>
                                             DP World Tour
                                         </button>
                                     </div>
                                 </div>
 
-                                {apiCallsToday >= MAX_CALLS_PER_DAY && (
-                                    <div className="bg-yellow-100 border border-yellow-400 text-yellow-800 px-3 py-2 rounded-lg mb-4 text-sm">
-                                        ⚠️ Daily API limit reached ({MAX_CALLS_PER_DAY} calls). Resets at midnight. Use cached data or try again tomorrow.
-                                    </div>
-                                )}
-
                                 {!predictions && !predictionsLoading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="text-6xl mb-4">🎯</div>
-                                        <h2 className="text-2xl font-bold text-gray-800 mb-3">{selectedTour === 'pga' ? 'PGA Tour' : 'DP World Tour'} Value Picks</h2>
-                                        <p className="text-gray-600 mb-2">AI-powered betting intelligence</p>
-                                        <p className="text-sm text-gray-500 mb-6">Course analysis • Player stats • Value odds 20/1+ • Top 2 picks</p>
+                                        <h2 className="text-2xl font-bold mb-3">{selectedTour === 'pga' ? 'PGA Tour' : 'DP World Tour'} Value Picks</h2>
+                                        <p className="text-sm text-gray-500 mb-6">AI-powered betting intelligence • Top 2 picks</p>
                                         <button 
                                             onClick={() => fetchPredictions(selectedTour)}
-                                            disabled={apiCallsToday >= MAX_CALLS_PER_DAY}
-                                            className="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                                            className="px-6 py-3 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700">
                                             Load Predictions
                                         </button>
                                     </div>
@@ -400,22 +298,16 @@ JSON:
                                 {predictionsLoading && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="inline-block animate-spin rounded-full h-10 w-10 border-b-2 border-green-600"></div>
-                                        <p className="text-sm text-gray-600 mt-4">Analyzing tournament & odds...</p>
-                                        <p className="text-xs text-gray-500 mt-2">Using fast sources • 10-20 seconds</p>
-                                        <div className="mt-4 text-xs text-gray-400">
-                                            <p>⏳ Fetching tournament details...</p>
-                                            <p>💰 Getting current odds...</p>
-                                            <p>🎯 Calculating top 2 value picks...</p>
-                                        </div>
+                                        <p className="text-sm text-gray-600 mt-4">Generating predictions...</p>
+                                        <p className="text-xs text-gray-500 mt-2">⚡ Fast mode: 3-5 seconds</p>
                                     </div>
                                 )}
 
                                 {!predictionsLoading && predictions?.comeSoonMessage && (
                                     <div className="bg-white rounded-lg shadow-lg p-8 text-center">
                                         <div className="text-6xl mb-4">⛳</div>
-                                        <h2 className="text-2xl font-bold text-gray-800 mb-3">Coming Wednesday</h2>
-                                        <p className="text-gray-600 mb-2">Value picks available <strong>Wednesday - Sunday</strong></p>
-                                        <p className="text-sm text-gray-500">Check back when tournaments begin</p>
+                                        <h2 className="text-2xl font-bold mb-3">Coming Wednesday</h2>
+                                        <p className="text-gray-600">Value picks available <strong>Wednesday - Sunday</strong></p>
                                     </div>
                                 )}
 
@@ -424,7 +316,7 @@ JSON:
                                         <div className="bg-white rounded-lg shadow-lg p-4 mb-4">
                                             <div className="flex justify-between items-start mb-3">
                                                 <div>
-                                                    <h2 className="text-xl font-bold text-gray-900">{predictions.tournament}</h2>
+                                                    <h2 className="text-xl font-bold">{predictions.tournament}</h2>
                                                     <p className="text-sm text-gray-600">{predictions.course}</p>
                                                 </div>
                                                 {getCacheAge(`pred_${selectedTour}`) && (
@@ -455,9 +347,7 @@ JSON:
                                                     <p className="text-xs font-bold text-green-800 mb-2">✅ Skills Needed</p>
                                                     <div className="flex flex-wrap gap-2">
                                                         {predictions.courseProfile.favoredSkills.map((s, i) => (
-                                                            <span key={i} className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-semibold">
-                                                                {s}
-                                                            </span>
+                                                            <span key={i} className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-semibold">{s}</span>
                                                         ))}
                                                     </div>
                                                 </div>
@@ -465,15 +355,15 @@ JSON:
                                             
                                             {predictions.weather && (
                                                 <div className="mb-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                                                    <p className="text-xs font-bold text-blue-800 mb-1">🌤️ Weather Estimate</p>
+                                                    <p className="text-xs font-bold text-blue-800 mb-1">🌤️ Weather</p>
                                                     <p className="text-sm text-blue-900">{predictions.weather}</p>
                                                 </div>
                                             )}
 
                                             <button 
                                                 onClick={() => fetchPredictions(selectedTour)}
-                                                disabled={predictionsLoading || apiCallsToday >= MAX_CALLS_PER_DAY}
-                                                className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                                                disabled={predictionsLoading}
+                                                className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 disabled:opacity-50">
                                                 Refresh Predictions
                                             </button>
                                         </div>
@@ -482,7 +372,7 @@ JSON:
                                             <h2 className="text-lg font-bold mb-4">💰 Top 2 Value Picks (20/1+ Odds)</h2>
                                             <div className="space-y-3">
                                                 {predictions.topPicks?.map((p, i) => (
-                                                    <div key={i} className="border-l-4 border-green-600 bg-gradient-to-r from-gray-50 to-green-50 p-3 rounded-r-lg hover:shadow-md transition-shadow">
+                                                    <div key={i} className="border-l-4 border-green-600 bg-gradient-to-r from-gray-50 to-green-50 p-3 rounded-r-lg">
                                                         <div className="flex gap-3">
                                                             <div className={`w-10 h-10 flex-shrink-0 ${i === 0 ? 'bg-yellow-400 text-yellow-900' : 'bg-gray-300 text-gray-800'} rounded-full flex items-center justify-center font-bold`}>
                                                                 {p.rank}
@@ -529,8 +419,8 @@ JSON:
                         )}
 
                         <div className="mt-6 text-center text-xs text-gray-600">
-                            <p>Powered by Claude AI • 12hr cache • Live data: Tournament details & odds</p>
-                            <p className="mt-1">Player stats from Claude's golf knowledge (updated in training data)</p>
+                            <p>Powered by Claude AI • 12hr cache • Based on AI golf knowledge</p>
+                            <p className="mt-1 text-yellow-600">⚠️ Verify tournament details & odds before betting</p>
                         </div>
                     </div>
                 </div>
