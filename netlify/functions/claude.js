@@ -1,7 +1,3 @@
-export const config = {
-  timeout: 60
-};
-
 exports.handler = async (event, context) => {
   context.callbackWaitsForEmptyEventLoop = false;
 
