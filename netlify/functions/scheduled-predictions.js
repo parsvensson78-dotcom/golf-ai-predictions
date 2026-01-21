@@ -1,4 +1,11 @@
-import Anthropic from '@anthropic-ai/sdk';
+exports.handler = async (event) => {
+  // DISABLED - Uncomment to re-enable
+  return {
+    statusCode: 200,
+    body: JSON.stringify({ message: 'Email function is disabled' })
+  };
+  
+  // Rest of the code stays below...import Anthropic from '@anthropic-ai/sdk';
 
 export const handler = async (event) => {
   const today = new Date();
