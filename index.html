@@ -246,13 +246,13 @@
                         role: "user",
                         content: `${today}. ${tourName} this week.
 
-Sources: ${tourSite} ${statsSite} oddschecker weather.com
+Sources: ${tourSite} datagolf.com draftkings.com
 
-3 value picks 20/1+ matching course.
+3 value picks 20/1+ matching course. Brief responses.
 
 JSON:
-{"tournament":"","course":"","location":"","dates":"","courseProfile":{"length":"","par":"","keyFeatures":["",""],"favoredSkills":[""]},"weather":"","valuePicks":[{"rank":1,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":2,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":3,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}}]}`
-                    }], 1500);
+{"tournament":"","course":"","location":"","dates":"","courseProfile":{"length":"","par":"","keyFeatures":[""],"favoredSkills":[""]},"weather":"","valuePicks":[{"rank":1,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":2,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":3,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}}]}`
+                    }], 1400);
 
                     const text = data.content
                         .filter(i => i.type === "text")
@@ -459,7 +459,7 @@ JSON:
                                             
                                             {predictions.weather && (
                                                 <div className="mb-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                                                    <p className="text-xs font-bold text-blue-800 mb-1">🌤️ Weather</p>
+                                                    <p className="text-xs font-bold text-blue-800 mb-1">🌤️ Weather Estimate</p>
                                                     <p className="text-sm text-blue-900">{predictions.weather}</p>
                                                 </div>
                                             )}
@@ -523,7 +523,7 @@ JSON:
                         )}
 
                         <div className="mt-6 text-center text-xs text-gray-600">
-                            <p>Powered by Claude AI • 12hr cache • Data: DataGolf, OddsChecker, Weather.com, {selectedTour === 'pga' ? 'PGA Tour' : 'DP World Tour (europeantour.com)'}</p>
+                            <p>Powered by Claude AI • 12hr cache • Data: DataGolf, DraftKings, {selectedTour === 'pga' ? 'PGA Tour' : 'DP World Tour (europeantour.com)'}</p>
                         </div>
                     </div>
                 </div>
