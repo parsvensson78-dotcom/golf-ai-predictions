@@ -8,6 +8,9 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Mobile debugging console -->
+    <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+    <script>eruda.init();</script>
 </head>
 <body>
     <div id="root"></div>
@@ -20,11 +23,9 @@
             const [apiKey, setApiKey] = useState('');
             const [apiKeyStored, setApiKeyStored] = useState(false);
             const [error, setError] = useState('');
-            
             const [predictions, setPredictions] = useState(null);
             const [predictionsLoading, setPredictionsLoading] = useState(false);
             const [selectedTour, setSelectedTour] = useState('pga');
-            
             const [timestamps, setTimestamps] = useState({});
             const CACHE_DURATION = 12 * 60 * 60 * 1000;
 
@@ -51,10 +52,9 @@
             const loadCachedData = () => {
                 try {
                     const predCache = localStorage.getItem('cached_predictions');
-                    const now = Date.now();
-                    
                     if (predCache) {
                         const parsed = JSON.parse(predCache);
+                        const now = Date.now();
                         if (now - parsed.timestamp < CACHE_DURATION) {
                             setPredictions(parsed.data);
                             setSelectedTour(parsed.tour || 'pga');
@@ -62,7 +62,7 @@
                         }
                     }
                 } catch (err) {
-                    console.error('Cache load error:', err);
+                    console.error('Cache error:', err);
                 }
             };
 
@@ -93,25 +93,17 @@
                     let cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '');
                     const start = cleaned.indexOf('{');
                     const end = cleaned.lastIndexOf('}');
-                    
-                    if (start === -1 || end === -1 || start >= end) {
-                        throw new Error('Invalid API response');
-                    }
-                    
+                    if (start === -1 || end === -1) throw new Error('No JSON found');
                     const jsonStr = cleaned.substring(start, end + 1);
                     const parsed = JSON.parse(jsonStr);
-                    
-                    if (!parsed.valuePicks || !Array.isArray(parsed.valuePicks)) {
-                        throw new Error('Invalid response structure');
-                    }
-                    
+                    if (!parsed.valuePicks) throw new Error('Invalid structure');
                     return parsed;
                 } catch (e) {
                     throw new Error('Failed to parse response');
                 }
             };
 
-            const callAPI = async (messages, maxTokens = 1024) => {
+            const callAPI = async (messages, maxTokens = 1500) => {
                 const response = await fetch("/.netlify/functions/claude", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -119,15 +111,13 @@
                         api_key: apiKey,
                         max_tokens: maxTokens,
                         messages: messages,
-                        tools: ['web_search']  // Single search for tournament only
+                        tools: ['web_search']
                     })
                 });
-
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({}));
                     throw new Error(errorData.error?.message || `Error ${response.status}`);
                 }
-
                 return await response.json();
             };
 
@@ -143,9 +133,7 @@
                 }
                 
                 const cacheKey = `pred_${tour}`;
-                const now = Date.now();
-                
-                if (timestamps[cacheKey] && now - timestamps[cacheKey] < CACHE_DURATION) {
+                if (timestamps[cacheKey] && Date.now() - timestamps[cacheKey] < CACHE_DURATION) {
                     return;
                 }
 
@@ -162,34 +150,25 @@
                         role: "user",
                         content: `${today}. ${tourName} this week.
 
-Search ${tourSite} for: tournament name, course, location, dates.
-Search draftkings.com for: current golf odds.
+Search ${tourSite} for tournament name, course, location, dates.
+Search draftkings.com for current golf odds.
 
-Then use your golf knowledge for player analysis and stats.
+Use your golf knowledge for player stats.
 
 2 value picks 20/1+ odds.
 
-JSON format:
-{"tournament":"tournament name","course":"course name","location":"city, state/country","dates":"Jan XX-XX, 2026","courseProfile":{"length":"7000+ yards","par":"72","keyFeatures":["wide fairways","firm greens"],"favoredSkills":["driving distance","accurate irons"]},"weather":"typical weather","valuePicks":[{"rank":1,"player":"Player Name","odds":"30/1","why":"Strong course fit, good recent form","coursefit":"Excels on similar courses","stats":{"drivingAcc":"65%","gir":"70%","sgApproach":"+0.8","sgPutting":"+0.5","recentForm":"T5, T10, T8"}},{"rank":2,"player":"Player Name","odds":"25/1","why":"...","coursefit":"...","stats":{"drivingAcc":"...","gir":"...","sgApproach":"...","sgPutting":"...","recentForm":"..."}}]}`
-                    }], 1500);
+JSON:
+{"tournament":"","course":"","location":"","dates":"","courseProfile":{"length":"","par":"","keyFeatures":[""],"favoredSkills":[""]},"weather":"","valuePicks":[{"rank":1,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}},{"rank":2,"player":"","odds":"","why":"","coursefit":"","stats":{"drivingAcc":"","gir":"","sgApproach":"","sgPutting":"","recentForm":""}}]}`
+                    }]);
 
-                    const text = data.content
-                        .filter(i => i.type === "text")
-                        .map(i => i.text)
-                        .join("");
-                    
+                    const text = data.content.filter(i => i.type === "text").map(i => i.text).join("");
                     const json = extractJSON(text);
                     json.topPicks = json.valuePicks;
                     setPredictions(json);
                     
                     const ts = Date.now();
                     setTimestamps(prev => ({...prev, [cacheKey]: ts}));
-                    
-                    localStorage.setItem('cached_predictions', JSON.stringify({ 
-                        data: json, 
-                        tour, 
-                        timestamp: ts 
-                    }));
+                    localStorage.setItem('cached_predictions', JSON.stringify({ data: json, tour, timestamp: ts }));
                 } catch (err) {
                     console.error('Error:', err);
                     setError(err.message || 'Failed to load predictions');
@@ -203,8 +182,7 @@ JSON format:
                 const age = Date.now() - timestamps[key];
                 const hours = Math.floor(age / (60 * 60 * 1000));
                 const minutes = Math.floor((age % (60 * 60 * 1000)) / (60 * 1000));
-                if (hours > 0) return `${hours}h ${minutes}m ago`;
-                return `${minutes}m ago`;
+                return hours > 0 ? `${hours}h ${minutes}m ago` : `${minutes}m ago`;
             };
 
             const StatBox = ({ label, value }) => value ? (
@@ -233,9 +211,7 @@ JSON format:
                         </div>
 
                         {error && (
-                            <div className="bg-red-100 border border-red-400 text-red-700 px-3 py-2 rounded-lg mb-4 text-sm">
-                                {error}
-                            </div>
+                            <div className="bg-red-100 border border-red-400 text-red-700 px-3 py-2 rounded-lg mb-4 text-sm">{error}</div>
                         )}
 
                         {activeTab === 'setup' && (
@@ -419,8 +395,8 @@ JSON format:
                         )}
 
                         <div className="mt-6 text-center text-xs text-gray-600">
-                            <p>Powered by Claude AI • 12hr cache • Tournament: ESPN Golf • Odds: DraftKings</p>
-                            <p className="mt-1 text-gray-500">Player stats & analysis from Claude's golf knowledge</p>
+                            <p>Powered by Claude AI • 12hr cache • Tournament: ESPN • Odds: DraftKings</p>
+                            <p className="mt-1 text-gray-500">Player stats from Claude's golf knowledge</p>
                         </div>
                     </div>
                 </div>
