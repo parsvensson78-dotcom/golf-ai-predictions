@@ -38,7 +38,7 @@ exports.handler = async (event, context) => {
     
     const requestBody = {
       model: 'claude-sonnet-4-20250514',
-      max_tokens: max_tokens || 5000,
+      max_tokens: max_tokens || 1700,
       messages: messages
     };
     
